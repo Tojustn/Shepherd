@@ -53,13 +53,27 @@ function XPBar({ xp, xpCurrentLevel, xpNextLevel, level }: {
 }
 
 function StreakCard({ label, streak }: { label: string; streak: StreakInfo }) {
+  const pct = Math.min((streak.current / 7) * 100, 100);
+
   return (
-    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 flex flex-col gap-1">
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">{label}</p>
-      <p className="text-3xl font-bold text-black dark:text-white">{streak.current}
-        <span className="text-base font-normal text-zinc-400 dark:text-zinc-500"> days</span>
-      </p>
-      <p className="text-xs text-zinc-400 dark:text-zinc-500">Longest: {streak.longest}</p>
+    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 flex flex-col gap-2">
+      <div className="flex items-baseline justify-between">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">{label}</p>
+        <p className="text-xs text-zinc-400 dark:text-zinc-500">best {streak.longest}</p>
+      </div>
+      <div className="flex items-center gap-3">
+        <p className="text-3xl font-bold text-black dark:text-white w-12 shrink-0">
+          {streak.current}
+          <span className="text-base font-normal text-zinc-400 dark:text-zinc-500">d</span>
+        </p>
+        <div className="flex-1 h-2 rounded-full bg-zinc-100 dark:bg-zinc-800">
+          <div
+            className="h-2 rounded-full bg-black dark:bg-white transition-all"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <p className="text-xs text-zinc-400 dark:text-zinc-500 w-8 text-right shrink-0">7d</p>
+      </div>
     </div>
   );
 }
