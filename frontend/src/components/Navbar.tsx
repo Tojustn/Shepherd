@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "@/context/theme";
 import { useAuth } from "@/context/auth";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,8 @@ export function Navbar() {
   const { isAuthenticated, logout } = useAuth();
 
   const router = useRouter();
+  const pathname = usePathname();
+  const isHome = pathname === "/";
 
   function handleLogout() {
     logout();
@@ -31,18 +33,16 @@ export function Navbar() {
       </Link>
 
       <nav className="flex items-center gap-8 text-sm font-medium text-zinc-600 dark:text-zinc-400">
-        <Link
-          href="#features"
-          className="hover:text-black dark:hover:text-white transition-colors"
-        >
-          Features
-        </Link>
-        <Link
-          href="#about"
-          className="hover:text-black dark:hover:text-white transition-colors"
-        >
-          About
-        </Link>
+        {isHome && (
+          <>
+            <Link href="#features" className="hover:text-black dark:hover:text-white transition-colors">
+              Features
+            </Link>
+            <Link href="#about" className="hover:text-black dark:hover:text-white transition-colors">
+              About
+            </Link>
+          </>
+        )}
         {isAuthenticated ? (
           <Button variant="ghost" size="sm" onClick={handleLogout}>
             Log out

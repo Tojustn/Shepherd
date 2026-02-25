@@ -23,7 +23,7 @@ export default function Home() {
       <main className="flex flex-1 flex-col items-center justify-center text-center px-4">
         <HeroText />
         <p className="mt-4 max-w-md text-lg text-zinc-500 dark:text-zinc-400">
-          GitHub activity, LeetCode stats, job search, and weekly AI digests — all in one place.
+          Earn XP from commits and LeetCode solves. Track streaks, hit goals, and level up as a developer.
         </p>
         <Button asChild className="mt-10 gap-2">
           <a href={GITHUB_LOGIN_URL}>

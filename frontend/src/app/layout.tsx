@@ -8,7 +8,7 @@ const geist = Geist({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Shepherd",
-  description: "Your personal developer command center.",
+  description: "Level up your coding. Earn XP from commits and LeetCode solves, track streaks, and hit goals.",
 };
 
 export default function RootLayout({
