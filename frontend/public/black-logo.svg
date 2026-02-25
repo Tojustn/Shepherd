@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 35 64 30" width="64" height="30">
+  <text x="50" y="50" font-family="JetBrains Mono, monospace" font-size="28" font-weight="700" text-anchor="middle" dominant-baseline="middle">
+    <tspan font-size="24" fill="#a1a1aa">&lt;</tspan><tspan font-size="32" dy="3" fill="#000000">S</tspan><tspan font-size="24" dy="-3" fill="#a1a1aa">&gt;</tspan>
+  </text>
+</svg>
