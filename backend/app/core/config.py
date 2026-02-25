@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
 
+    GITHUB_WEBHOOK_SECRET: str = ""
     LEETCODE_SESSION_COOKIE: str = ""
 
     JWT_ALGORITHM: str = "HS256"

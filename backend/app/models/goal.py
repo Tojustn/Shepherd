@@ -14,9 +14,11 @@ if TYPE_CHECKING:
 
 
 class GoalType(str, Enum):
-    LEETCODE_WEEKLY = "leetcode_weekly"
-    APPLICATIONS_DAILY = "applications_daily"
+    COMMITS_DAILY = "commits_daily"
     COMMITS_WEEKLY = "commits_weekly"
+    LEETCODE_DAILY = "leetcode_daily"
+    LEETCODE_WEEKLY = "leetcode_weekly"
+    STREAK_MAINTAIN = "streak_maintain"
     CUSTOM = "custom"
 
 

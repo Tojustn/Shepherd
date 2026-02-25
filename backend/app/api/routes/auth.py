@@ -6,8 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import create_access_token
+from app.core.security import create_access_token, get_current_user
+from app.models.streak import Streak, StreakType
 from app.models.user import User
+from app.schemas.user import StreakInfo, UserOut
+from app.services.xp_service import xp_for_level
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -74,6 +77,34 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
 
     jwt_token = create_access_token(user.id)
     return RedirectResponse(f"{settings.FRONTEND_URL}/auth/callback?token={jwt_token}")
+
+
+@router.get("/me", response_model=UserOut)
+async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Streak).where(Streak.user_id == user.id))
+    streaks = {s.type: s for s in result.scalars().all()}
+
+    empty_streak = StreakInfo(current=0, longest=0, last_activity_date=None)
+
+    def to_streak_info(s: Streak | None) -> StreakInfo:
+        if not s:
+            return empty_streak
+        return StreakInfo(current=s.current, longest=s.longest, last_activity_date=s.last_activity_date)
+
+    return {
+        "id": user.id,
+        "github_id": user.github_id,
+        "username": user.username,
+        "email": user.email,
+        "avatar_url": user.avatar_url,
+        "xp": user.xp,
+        "level": user.level,
+        "xp_current_level": xp_for_level(user.level) if user.level > 1 else 0,
+        "xp_next_level": xp_for_level(user.level + 1),
+        "github_streak": to_streak_info(streaks.get(StreakType.GITHUB)),
+        "leetcode_streak": to_streak_info(streaks.get(StreakType.LEETCODE)),
+        "created_at": user.created_at,
+    }
 
 
 @router.post("/logout")
