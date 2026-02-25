@@ -31,8 +31,6 @@ def github_event(event_type: str):
 
 
 def _verify_signature(body: bytes, signature_header: str | None) -> bool:
-    print("SECRET:", repr(settings.GITHUB_WEBHOOK_SECRET))                                                                                                                                                                                                                                
-    print("SIG HEADER:", repr(signature_header))
     if not signature_header or not settings.GITHUB_WEBHOOK_SECRET:
         return False
     expected = "sha256=" + hmac.new(
@@ -40,8 +38,6 @@ def _verify_signature(body: bytes, signature_header: str | None) -> bool:
         body,
         hashlib.sha256,
     ).hexdigest()
-    print("EXPECTED:", expected)
-    print("RECEIVED:", signature_header)
     return hmac.compare_digest(expected, signature_header)
 
 
