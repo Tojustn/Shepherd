@@ -38,7 +38,11 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader className="px-4 py-5">
-        <span className="text-lg font-bold tracking-tight text-black dark:text-white">Shepherd</span>
+        <span className="font-mono text-lg font-bold tracking-tight">
+          <span className="text-zinc-400 dark:text-zinc-500">&lt;</span>
+          <span className="text-black dark:text-white">Shepherd</span>
+          <span className="text-zinc-400 dark:text-zinc-500">&gt;</span>
+        </span>
       </SidebarHeader>
 
       <SidebarContent>
