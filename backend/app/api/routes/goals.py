@@ -9,6 +9,7 @@ from app.models.user import User
 from app.models.xp_event import XPSource
 from app.schemas.goal import GoalCreate, GoalOut
 from app.services.xp_service import award_xp
+from app.services.goal_service import update_goal
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -40,24 +41,15 @@ async def create_goal(
     await db.refresh(goal)
     return goal
 
-
+#Path used for custom goals
 @router.patch("/{goal_id}/complete", response_model=GoalOut)
 async def complete_goal(
     goal_id: int,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Goal).where(Goal.id == goal_id, Goal.user_id == user.id))
-    goal = result.scalar_one_or_none()
-    if goal is None:
-        raise HTTPException(status_code=404, detail="Goal not found")
-    if goal.current >= goal.target:
-        return goal  # already completed, don't award XP again
-    goal.current = goal.target
-    await award_xp(db, user, XPSource.GOAL_COMPLETE, meta={"goal_id": goal.id, "difficulty": goal.difficulty})
-    await db.commit()
-    await db.refresh(goal)
-    return goal
+    update_goal(goal_id, user, db, None, True)
+    
 
 
 @router.delete("/{goal_id}", status_code=204)

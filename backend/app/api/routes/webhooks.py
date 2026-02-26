@@ -15,6 +15,7 @@ from app.models.xp_event import XPSource
 from app.services.cache import cache_delete, cache_delete_pattern
 from app.services.streak_service import update_streak
 from app.services.xp_service import award_xp
+from app.services.goal_service import increment_commit_goals 
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -55,32 +56,38 @@ async def handle_push(data: dict, db: AsyncSession, user: User) -> dict[str, Any
     commits = data.get("commits", [])
     repo = data.get("repository", {}).get("full_name", "")
 
-    for commit in commits:
-        added_files = commit.get("added", [])
-        removed_files = commit.get("removed", [])
-        modified_files = commit.get("modified", [])
+    try: 
+        for commit in commits:
+            added_files = commit.get("added", [])
+            removed_files = commit.get("removed", [])
+            modified_files = commit.get("modified", [])
 
-        meta = {
-            "sha": commit.get("id"),
-            "repo": repo,
-            "added_files": added_files,
-            "removed_files": removed_files,
-            "modified_files": modified_files,
-            "files_changed": len(added_files) + len(removed_files) + len(modified_files),
-        }
+            meta = {
+                "sha": commit.get("id"),
+                "repo": repo,
+                "added_files": added_files,
+                "removed_files": removed_files,
+                "modified_files": modified_files,
+                "files_changed": len(added_files) + len(removed_files) + len(modified_files),
+            }
 
-        await award_xp(
-            db,
-            user,
-            XPSource.COMMIT,
-            meta=meta, 
-        )
-
-    await update_streak(db, user, StreakType.GITHUB)
-    await db.commit()
-    await cache_delete(f"github:repos:{user.id}")
-    await cache_delete_pattern(f"github:repo:{repo}:*")
-    
+            
+            await award_xp(
+                db,
+                user,
+                XPSource.COMMIT,
+                meta=meta, 
+            )
+        await update_streak(db, user, StreakType.GITHUB)
+        await increment_commit_goals(user, db)
+        await db.commit()
+        await cache_delete(f"user:me:{user.id}")
+        await cache_delete(f"github:repos:{user.id}")
+        await cache_delete_pattern(f"github:repo:{repo}:*")
+    except Exception:
+        await db.rollback()
+        raise
+            
 
     return {"status": "ok", "commits_processed": len(commits)}
 

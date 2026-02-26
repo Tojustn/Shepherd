@@ -82,6 +82,11 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    cache_key = f"user:me:{user.id}"
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
+
     result = await db.execute(select(Streak).where(Streak.user_id == user.id))
     streaks = {s.type: s for s in result.scalars().all()}
 
@@ -93,14 +98,12 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
     )
     recent_goals = goals_result.scalars().all()
 
-    empty_streak = StreakInfo(current=0, longest=0, last_activity_date=None)
-
     def to_streak_info(s: Streak | None) -> StreakInfo:
         if not s:
-            return empty_streak
+            return StreakInfo(current=0, longest=0, last_activity_date=None)
         return StreakInfo(current=s.current, longest=s.longest, last_activity_date=s.last_activity_date)
 
-    return {
+    data = {
         "id": user.id,
         "github_id": user.github_id,
         "username": user.username,
@@ -112,10 +115,13 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         "xp_next_level": xp_for_level(user.level + 1),
         "github_streak": to_streak_info(streaks.get(StreakType.GITHUB)),
         "leetcode_streak": to_streak_info(streaks.get(StreakType.LEETCODE)),
-        "recent_goals": recent_goals,
+        "recent_goals": [GoalOut.model_validate(g) for g in recent_goals],
         "pending_level_up": user.pending_level_up,
         "created_at": user.created_at,
     }
+
+    await cache_set(cache_key, data, ttl=60 * 5)
+    return data
 
 
 @router.post("/clear-level-up", status_code=204)
