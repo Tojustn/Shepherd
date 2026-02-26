@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User
 from app.models.xp_event import XPEvent, XPSource
 from app.models.streak import Streak, StreakType
+from app.services import sse_service
 
 # --- XP values ---
 XP_VALUES: dict[XPSource, int] = {
@@ -17,6 +18,8 @@ XP_VALUES: dict[XPSource, int] = {
 }
 
 LEETCODE_XP = {"easy": 20, "medium": 40, "hard": 80}
+
+GOAL_DIFFICULTY_XP = {1: 10, 2: 20, 3: 30, 4: 40, 5: 50}
 
 DAILY_CAPS: dict[XPSource, int | None] = {
     XPSource.COMMIT: 15,
@@ -36,7 +39,7 @@ def streak_multiplier(current_streak: int) -> float:
 
 
 def xp_for_level(level: int) -> int:
-    return 100 * level ** 2
+    return 100 * (level - 1)
 
 
 def compute_level(total_xp: int) -> int:
@@ -71,6 +74,9 @@ async def award_xp(
     if source == XPSource.LEETCODE_SOLVE:
         difficulty = (meta or {}).get("difficulty", "easy").lower()
         base_xp = LEETCODE_XP.get(difficulty, 20)
+    elif source == XPSource.GOAL_COMPLETE:
+        difficulty = (meta or {}).get("difficulty", 1)
+        base_xp = GOAL_DIFFICULTY_XP.get(difficulty, 10)
     else:
         base_xp = XP_VALUES[source]
 
@@ -90,9 +96,22 @@ async def award_xp(
     db.add(XPEvent(user_id=user.id, source=source, amount=awarded, meta=meta))
 
     user.xp += awarded
-    user.level = compute_level(user.xp)
+    new_level = compute_level(user.xp)
+    leveled_up = new_level > user.level
+    if leveled_up:
+        user.pending_level_up = True
+    user.level = new_level
 
     await db.flush()
+
+    await sse_service.push(user.id, "xp_gained", {
+        "amount": awarded,
+        "source": source.value,
+        "level_up": leveled_up,
+        "new_level": user.level,
+        "total_xp": user.xp,
+    })
+
     return awarded
 
 

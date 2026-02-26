@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token, get_current_user
+from app.models.goal import Goal
 from app.models.streak import Streak, StreakType
 from app.models.user import User
 from app.schemas.user import StreakInfo, UserOut
@@ -84,6 +85,14 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
     result = await db.execute(select(Streak).where(Streak.user_id == user.id))
     streaks = {s.type: s for s in result.scalars().all()}
 
+    goals_result = await db.execute(
+        select(Goal)
+        .where(Goal.user_id == user.id, Goal.active == True)
+        .order_by(Goal.created_at.desc())
+        .limit(2)
+    )
+    recent_goals = goals_result.scalars().all()
+
     empty_streak = StreakInfo(current=0, longest=0, last_activity_date=None)
 
     def to_streak_info(s: Streak | None) -> StreakInfo:
@@ -103,8 +112,16 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         "xp_next_level": xp_for_level(user.level + 1),
         "github_streak": to_streak_info(streaks.get(StreakType.GITHUB)),
         "leetcode_streak": to_streak_info(streaks.get(StreakType.LEETCODE)),
+        "recent_goals": recent_goals,
+        "pending_level_up": user.pending_level_up,
         "created_at": user.created_at,
     }
+
+
+@router.post("/clear-level-up", status_code=204)
+async def clear_level_up(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    user.pending_level_up = False
+    await db.commit()
 
 
 @router.post("/logout")

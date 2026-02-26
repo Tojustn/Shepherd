@@ -9,6 +9,7 @@ class GoalCreate(BaseModel):
     type: GoalType
     period: GoalPeriod
     target: int
+    difficulty: int = 1  # 1–5 stars
     label: str
 
 

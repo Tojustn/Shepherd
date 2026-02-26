@@ -1,11 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.services.cache import cache_get, cache_set
-from app.services.github_service import fetch_repos
+from app.services.github_service import fetch_events, fetch_repos
 
 router = APIRouter(prefix="/github", tags=["github"])
 
@@ -44,10 +42,34 @@ async def get_repos(user: User = Depends(get_current_user)):
 
 
 @router.get("/activity")
-async def get_activity(db: AsyncSession = Depends(get_db)):
-    return {"commits": [], "pull_requests": [], "repos": []}
+async def get_activity(user: User = Depends(get_current_user)):
+    if not user.github_access_token:
+        raise HTTPException(status_code=400, detail="No GitHub token on file")
 
+    cache_key = f"github:activity:{user.id}"
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
 
-@router.get("/streak")
-async def get_streak(db: AsyncSession = Depends(get_db)):
-    return {"current": 0, "longest": 0}
+    events = await fetch_events(user.username, user.github_access_token)
+
+    pushes = []
+    for event in events:
+        if event.get("type") != "PushEvent":
+            continue
+        payload = event.get("payload", {})
+        commits = [
+            {"message": c["message"].splitlines()[0], "sha": c.get("sha", c.get("id", ""))[:7]}
+            for c in payload.get("commits", [])
+        ]
+        pushes.append({
+            "repo": event["repo"]["name"],
+            "commits": commits,
+            "count": payload.get("size", len(commits)),
+            "date": event["created_at"],
+        })
+        if len(pushes) >= 10:
+            break
+
+    await cache_set(cache_key, pushes, ttl=60 * 5)
+    return pushes

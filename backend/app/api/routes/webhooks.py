@@ -1,7 +1,6 @@
 import hashlib
 import hmac
 from collections.abc import Awaitable, Callable
-from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -10,10 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.streak import Streak, StreakType
+from app.models.streak import StreakType
 from app.models.user import User
 from app.models.xp_event import XPSource
 from app.services.cache import cache_delete
+from app.services.streak_service import update_streak
 from app.services.xp_service import award_xp
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -47,29 +47,6 @@ async def _resolve_user(db: AsyncSession, username: str) -> User | None:
     return result.scalar_one_or_none()
 
 
-async def _update_github_streak(db: AsyncSession, user: User) -> None:
-    result = await db.execute(
-        select(Streak).where(Streak.user_id == user.id, Streak.type == StreakType.GITHUB)
-    )
-    streak = result.scalar_one_or_none()
-    today = date.today()
-
-    if streak is None:
-        db.add(Streak(user_id=user.id, type=StreakType.GITHUB, current=1, longest=1, last_activity_date=today))
-        return
-
-    if streak.last_activity_date == today:
-        return
-
-    if streak.last_activity_date is not None and (today - streak.last_activity_date).days == 1:
-        streak.current += 1
-    else:
-        streak.current = 1
-
-    streak.longest = max(streak.longest, streak.current)
-    streak.last_activity_date = today
-
-
 
 # @github_event("push") calls github_event("push"), which returns decorator.
 # Python then calls decorator(handle_push), registering _handlers["push"] = handle_push.
@@ -81,7 +58,7 @@ async def handle_push(data: dict, db: AsyncSession, user: User) -> dict[str, Any
     for commit in commits:
         await award_xp(db, user, XPSource.COMMIT, meta={"sha": commit.get("id"), "repo": repo})
 
-    await _update_github_streak(db, user)
+    await update_streak(db, user, StreakType.GITHUB)
     await db.commit()
     await cache_delete(f"github:repos:{user.id}")
 

@@ -36,6 +36,7 @@ class Goal(Base):
     period: Mapped[GoalPeriod] = mapped_column(String(16))
     target: Mapped[int] = mapped_column(Integer)
     current: Mapped[float] = mapped_column(Float, default=0)
+    difficulty: Mapped[int] = mapped_column(Integer, default=1)  # 1–5 stars
     label: Mapped[str] = mapped_column(String(256))
     active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

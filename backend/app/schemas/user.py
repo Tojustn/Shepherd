@@ -2,6 +2,8 @@ from datetime import date, datetime
 
 from pydantic import BaseModel
 
+from app.schemas.goal import GoalOut
+
 
 class StreakInfo(BaseModel):
     current: int
@@ -21,6 +23,8 @@ class UserOut(BaseModel):
     xp_next_level: int
     github_streak: StreakInfo
     leetcode_streak: StreakInfo
+    recent_goals: list[GoalOut]
+    pending_level_up: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
