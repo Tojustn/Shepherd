@@ -38,11 +38,7 @@ export function HeroText() {
         return (
           <span
             key={i}
-            className={
-              isBracket
-                ? "text-zinc-400 dark:text-zinc-500"
-                : "text-black dark:text-white"
-            }
+            className={isBracket ? "text-base-content/30" : "text-base-content"}
           >
             {char}
           </span>
@@ -51,7 +47,7 @@ export function HeroText() {
 
       {/* Always reserve cursor space — just hide it when done */}
       <span
-        className={`inline-block w-[3px] h-[1em] align-middle ml-1 rounded-sm bg-black dark:bg-white transition-opacity duration-150 ${
+        className={`inline-block w-[3px] h-[1em] align-middle ml-1 rounded-sm bg-base-content transition-opacity duration-150 ${
           done ? "opacity-0" : "opacity-100"
         }`}
       />

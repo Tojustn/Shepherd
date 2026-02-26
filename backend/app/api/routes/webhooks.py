@@ -56,15 +56,31 @@ async def handle_push(data: dict, db: AsyncSession, user: User) -> dict[str, Any
     repo = data.get("repository", {}).get("full_name", "")
 
     for commit in commits:
-        await award_xp(db, user, XPSource.COMMIT, meta={"sha": commit.get("id"), "repo": repo})
+        added_files = commit.get("added", [])
+        removed_files = commit.get("removed", [])
+        modified_files = commit.get("modified", [])
+
+        meta = {
+            "sha": commit.get("id"),
+            "repo": repo,
+            "added_files": added_files,
+            "removed_files": removed_files,
+            "modified_files": modified_files,
+            "files_changed": len(added_files) + len(removed_files) + len(modified_files),
+        }
+
+        await award_xp(
+            db,
+            user,
+            XPSource.COMMIT,
+            meta=meta, 
+        )
 
     await update_streak(db, user, StreakType.GITHUB)
     await db.commit()
     await cache_delete(f"github:repos:{user.id}")
 
     return {"status": "ok", "commits_processed": len(commits)}
-
-
 
 @router.post("/github")
 async def github_webhook(

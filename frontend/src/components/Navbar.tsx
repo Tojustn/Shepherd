@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "@/context/theme";
 import { useAuth } from "@/context/auth";
-import { Button } from "@/components/ui/button";
 
 export function Navbar() {
   const { theme, toggleTheme } = useTheme();
@@ -21,7 +20,7 @@ export function Navbar() {
   }
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-4 border-b border-zinc-100 dark:border-zinc-900 bg-white/80 dark:bg-black/80 backdrop-blur-sm">
+    <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-4 border-b border-base-200 bg-base-100/80 backdrop-blur-sm">
       <Link href="/">
         <Image
           src={theme === "light" ? "/black-logo.svg" : "/white-logo.svg"}
@@ -32,25 +31,25 @@ export function Navbar() {
         />
       </Link>
 
-      <nav className="flex items-center gap-8 text-sm font-medium text-zinc-600 dark:text-zinc-400">
+      <nav className="flex items-center gap-6 text-sm font-medium text-base-content/60">
         {isHome && (
           <>
-            <Link href="#features" className="hover:text-black dark:hover:text-white transition-colors">
+            <Link href="#features" className="hover:text-base-content transition-colors">
               Features
             </Link>
-            <Link href="#about" className="hover:text-black dark:hover:text-white transition-colors">
+            <Link href="#about" className="hover:text-base-content transition-colors">
               About
             </Link>
           </>
         )}
         {isAuthenticated ? (
-          <Button variant="ghost" size="sm" onClick={handleLogout}>
+          <button onClick={handleLogout} className="btn btn-ghost btn-sm">
             Log out
-          </Button>
+          </button>
         ) : (
           <a
             href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/auth/github/login`}
-            className="hover:text-black dark:hover:text-white transition-colors"
+            className="hover:text-base-content transition-colors"
           >
             Log in
           </a>
@@ -59,7 +58,7 @@ export function Navbar() {
         <button
           onClick={toggleTheme}
           aria-label="Toggle theme"
-          className="rounded-md p-1.5 text-zinc-500 hover:text-black dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
+          className="btn btn-ghost btn-square btn-sm"
         >
           {theme === "light" ? (
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

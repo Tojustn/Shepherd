@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Nunito } from "next/font/google";
 import { ThemeProvider } from "@/context/theme";
 import { AuthProvider } from "@/context/auth";
 import "./globals.css";
 
-const geist = Geist({ subsets: ["latin"] });
+const nunito = Nunito({ subsets: ["latin"], weight: ["400", "600", "700", "800", "900"] });
 
 export const metadata: Metadata = {
   title: "Shepherd",
@@ -18,7 +18,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${geist.className} antialiased`}>
+      <body className={`${nunito.className} antialiased`}>
         <ThemeProvider>
           <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>
