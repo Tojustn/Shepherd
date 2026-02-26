@@ -12,6 +12,7 @@ from app.models.streak import Streak, StreakType
 from app.models.user import User
 from app.schemas.user import StreakInfo, UserOut
 from app.services.xp_service import xp_for_level
+from app.services.cache import cache_get, cache_set, cache_delete
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
