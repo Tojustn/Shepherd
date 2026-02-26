@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token, get_current_user
 from app.models.goal import Goal
+from app.schemas.goal import GoalOut
 from app.models.streak import Streak, StreakType
 from app.models.user import User
 from app.schemas.user import StreakInfo, UserOut
@@ -121,7 +122,9 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         "created_at": user.created_at,
     }
 
-    await cache_set(cache_key, data, ttl=60 * 5)
+    serialized = UserOut(**data).model_dump(mode="json")
+    await cache_set(cache_key, serialized, ttl=60 * 5)
+    return data
     return data
 
 
