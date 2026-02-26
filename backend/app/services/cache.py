@@ -20,3 +20,13 @@ async def cache_set(key: str, value: Any, ttl: int = DEFAULT_TTL) -> None:
 async def cache_delete(key: str) -> None:
     redis = await get_redis()
     await redis.delete(key)
+
+async def cache_delete_pattern(pattern: str) -> None:
+    redis = await get_redis()
+    cursor = 0
+    while True:
+        cursor, keys = await redis.scan(cursor, match=pattern, count=100)
+        if keys:
+            await redis.delete(*keys)
+        if cursor == 0:
+            break

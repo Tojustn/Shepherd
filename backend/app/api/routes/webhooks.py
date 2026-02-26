@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.models.streak import StreakType
 from app.models.user import User
 from app.models.xp_event import XPSource
-from app.services.cache import cache_delete
+from app.services.cache import cache_delete, cache_delete_pattern
 from app.services.streak_service import update_streak
 from app.services.xp_service import award_xp
 
@@ -79,6 +79,8 @@ async def handle_push(data: dict, db: AsyncSession, user: User) -> dict[str, Any
     await update_streak(db, user, StreakType.GITHUB)
     await db.commit()
     await cache_delete(f"github:repos:{user.id}")
+    await cache_delete_pattern(f"github:repo:{repo}:*")
+    
 
     return {"status": "ok", "commits_processed": len(commits)}
 

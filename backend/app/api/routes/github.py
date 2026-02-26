@@ -86,7 +86,7 @@ async def get_commit_detail(repo_name: str, sha: str, user: User = Depends(get_c
     if not user.github_access_token:
         raise HTTPException(status_code=400, detail="No GitHub token on file")
 
-    cache_key = f"github:commit:{user.id}:{repo_name}:{sha}"
+    cache_key = f"github:repo:{user.username}/{repo_name}:commit:{sha}:{user.id}"
     cached = await cache_get(cache_key)
     if cached:
         return cached
