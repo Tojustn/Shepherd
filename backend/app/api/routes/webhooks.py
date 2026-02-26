@@ -15,7 +15,9 @@ from app.models.xp_event import XPSource
 from app.services.cache import cache_delete, cache_delete_pattern
 from app.services.streak_service import update_streak
 from app.services.xp_service import award_xp
-from app.services.goal_service import increment_commit_goals 
+from app.services.goal_service import increment_commit_goals
+from app.services import sse_service
+from app.schemas.goal import GoalOut
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -79,8 +81,11 @@ async def handle_push(data: dict, db: AsyncSession, user: User) -> dict[str, Any
                 meta=meta, 
             )
         await update_streak(db, user, StreakType.GITHUB)
-        await increment_commit_goals(user, db)
+        updated_goals = await increment_commit_goals(user, db)
         await db.commit()
+        for goal in updated_goals:
+            await db.refresh(goal)
+            await sse_service.push(user.id, "goal_updated", GoalOut.model_validate(goal).model_dump(mode="json"))
         await cache_delete(f"user:me:{user.id}")
         await cache_delete(f"github:repos:{user.id}")
         await cache_delete_pattern(f"github:repo:{repo}:*")

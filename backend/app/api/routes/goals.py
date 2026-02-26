@@ -10,6 +10,7 @@ from app.models.xp_event import XPSource
 from app.schemas.goal import GoalCreate, GoalOut
 from app.services.xp_service import award_xp
 from app.services.goal_service import update_goal
+from app.services import sse_service
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -39,6 +40,7 @@ async def create_goal(
     db.add(goal)
     await db.commit()
     await db.refresh(goal)
+    await sse_service.push(user.id, "goal_created", GoalOut.model_validate(goal).model_dump(mode="json"))
     return goal
 
 #Path used for custom goals
@@ -64,3 +66,4 @@ async def delete_goal(
         raise HTTPException(status_code=404, detail="Goal not found")
     await db.delete(goal)
     await db.commit()
+    await sse_service.push(user.id, "goal_deleted", {"id": goal_id})

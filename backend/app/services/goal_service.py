@@ -52,15 +52,19 @@ async def fetch_commit_goal_ids(
 async def increment_commit_goals(
     user: User,
     db: AsyncSession,
-) -> None:
+) -> list[Goal]:
+    """Increment all active commit goals and return the updated Goal objects."""
     goal_ids = await fetch_commit_goal_ids(user.id, db)
+    updated: list[Goal] = []
     for goal_id in goal_ids:
-        goal = await db.execute(select(Goal).where(Goal.id == goal_id))
-        goal = goal.scalar_one_or_none()
+        result = await db.execute(select(Goal).where(Goal.id == goal_id))
+        goal = result.scalar_one_or_none()
         if goal:
-            await update_goal(
+            updated_goal = await update_goal(
                 goal_id=goal_id,
                 user=user,
                 db=db,
                 new_value=goal.current + 1,
             )
+            updated.append(updated_goal)
+    return updated

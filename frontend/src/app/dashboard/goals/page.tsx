@@ -94,6 +94,24 @@ export default function GoalsPage() {
       .then(setGoals);
   }, [token]);
 
+  useEffect(() => {
+    if (!token) return;
+    const es = new EventSource(`${API_URL}/api/events/stream?token=${token}`);
+    es.addEventListener("goal_updated", (e) => {
+      const updated: Goal = JSON.parse(e.data);
+      setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+    });
+    es.addEventListener("goal_created", (e) => {
+      const created: Goal = JSON.parse(e.data);
+      setGoals((prev) => [created, ...prev.filter((g) => g.id !== created.id)]);
+    });
+    es.addEventListener("goal_deleted", (e) => {
+      const { id } = JSON.parse(e.data);
+      setGoals((prev) => prev.filter((g) => g.id !== id));
+    });
+    return () => es.close();
+  }, [token]);
+
   async function handleDelete(id: number) {
     await fetch(`${API_URL}/api/goals/${id}`, {
       method: "DELETE",

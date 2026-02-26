@@ -125,7 +125,6 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
     serialized = UserOut(**data).model_dump(mode="json")
     await cache_set(cache_key, serialized, ttl=60 * 5)
     return data
-    return data
 
 
 @router.post("/clear-level-up", status_code=204)
