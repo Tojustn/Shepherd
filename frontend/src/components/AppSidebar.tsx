@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, GitBranch, Flame, Target, LogOut, Sun, Moon } from "lucide-react";
+import { LayoutDashboard, GitBranch, Target, LogOut, Sun, Moon, Code2, User } from "lucide-react";
 import { useAuth } from "@/context/auth";
 import { useTheme } from "@/context/theme";
 
 const NAV_ITEMS = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Repos",     href: "/dashboard/repos",   icon: GitBranch },
-  { label: "Streaks",   href: "/dashboard/streaks", icon: Flame },
-  { label: "Goals",     href: "/dashboard/goals",   icon: Target },
+  { label: "Dashboard", href: "/dashboard",          icon: LayoutDashboard },
+  { label: "Repos",     href: "/dashboard/repos",    icon: GitBranch },
+  { label: "Goals",     href: "/dashboard/goals",    icon: Target },
+  { label: "LeetCode",  href: "/dashboard/leetcode", icon: Code2 },
+  { label: "Profile",   href: "/dashboard/profile",  icon: User },
 ];
 
 export function AppSidebar() {

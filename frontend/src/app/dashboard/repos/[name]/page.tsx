@@ -18,19 +18,24 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft, X } from "lucide-react";
+import { ArrowLeft, X, GitBranch } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const NODE_SIZE = 72;
-const SPACING_Y  = 80;   // tight — nodes nearly touch, creating the snake effect
-const ZIG_X      = 85;
 
+// ── Types ─────────────────────────────────────────────────────────────────
 
 interface Commit {
   sha: string;
   message: string;
   date: string;
   author: string;
+}
+
+interface BranchData {
+  name: string;
+  sha: string;
+  date: string;
+  commits: Commit[];
 }
 
 interface CommitDetail {
@@ -43,6 +48,24 @@ interface CommitDetail {
   files: { filename: string; additions: number; deletions: number; status: string }[];
 }
 
+// ── Layout constants ──────────────────────────────────────────────────────
+
+const ROW_H  = 120;
+const LANE_W = 250;
+const NODE_W = 180;
+const NODE_H = 76;
+const HEAD_W = 192;
+const HEAD_H = 92;
+
+// Lane 0 = main (accent), lanes 1–3 = feature branch colours
+const LANE_COLORS = [
+  "var(--game-accent)",
+  "#a78bfa",   // violet
+  "#34d399",   // emerald
+  "#f472b6",   // pink
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────
 
 function timeAgo(dateStr: string) {
   const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
@@ -57,111 +80,286 @@ function calcXP(d: CommitDetail) {
 }
 
 const FILE_STATUS: Record<string, { cls: string; label: string }> = {
-  added:    { cls: "bg-green-500/15 text-green-500",  label: "A" },
-  removed:  { cls: "bg-red-500/15 text-red-500",     label: "R" },
-  modified: { cls: "bg-blue-500/15 text-blue-400",   label: "M" },
+  added:    { cls: "bg-green-500/15 text-green-500",   label: "A" },
+  removed:  { cls: "bg-red-500/15 text-red-500",      label: "R" },
+  modified: { cls: "bg-blue-500/15 text-blue-400",    label: "M" },
   renamed:  { cls: "bg-purple-500/15 text-purple-400", label: "N" },
 };
 
-// No onClick here — React Flow's pan swallows it.
-// Clicks are handled via onNodeClick on <ReactFlow> instead.
+// ── Graph layout helpers ──────────────────────────────────────────────────
 
-function CommitNode({ data }: NodeProps) {
-  const d = data as unknown as Commit & { isLatest: boolean };
+/** Interpolated Y position for a date inside the main commit timeline */
+function dateToY(date: string, mainCommits: Commit[]): number {
+  if (!mainCommits.length) return 0;
+  const d = new Date(date).getTime();
+  const newestMs = new Date(mainCommits[0].date).getTime();
+  if (d >= newestMs) return -ROW_H * 0.65;
 
-  return (
-    <div style={{ cursor: "pointer" }}>
-      <Handle type="target" position={Position.Top}    style={{ opacity: 0 }} />
-      <div
-        className="rounded-full border-2 flex flex-col items-center justify-center transition-all"
-        style={{
-          width: NODE_SIZE,
-          height: NODE_SIZE,
-          backgroundColor: d.isLatest ? "var(--game-accent)"          : "var(--color-base-200)",
-          borderColor:     d.isLatest ? "var(--game-accent)"          : "color-mix(in oklch, var(--color-base-content) 20%, transparent)",
-          boxShadow:       d.isLatest ? "0 0 24px color-mix(in oklch, var(--game-accent) 50%, transparent)" : "0 2px 6px rgba(0,0,0,0.15)",
-          color:           d.isLatest ? "color-mix(in oklch, var(--game-accent) 20%, black)" : "var(--color-base-content)",
-        }}
-      >
-        <p className="font-black" style={{ fontSize: 9, fontFamily: "monospace", opacity: d.isLatest ? 0.7 : 0.5 }}>
-          {d.sha.slice(0, 7)}
-        </p>
-        <p className="font-bold" style={{ fontSize: 8, marginTop: 2, opacity: d.isLatest ? 0.55 : 0.35 }}>
-          {timeAgo(d.date)}
-        </p>
-      </div>
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
-    </div>
-  );
-}
-
-
-function MilestoneNode({ data }: NodeProps) {
-  const d = data as { level: number };
-  return (
-    <div>
-      <Handle type="target" position={Position.Top}    style={{ opacity: 0 }} />
-      <div
-        className="rounded-full border-2 flex flex-col items-center justify-center"
-        style={{
-          width: NODE_SIZE + 12,
-          height: NODE_SIZE + 12,
-          backgroundColor: "color-mix(in oklch, #f59e0b 12%, transparent)",
-          borderColor: "#f59e0b",
-          boxShadow: "0 0 28px rgba(245,158,11,0.35), 0 0 56px rgba(245,158,11,0.1)",
-        }}
-      >
-        <span style={{ fontSize: 20, lineHeight: 1 }}>⭐</span>
-        <p className="font-black" style={{ fontSize: 9, color: "#f59e0b", marginTop: 3, letterSpacing: "0.05em" }}>
-          LEVEL {d.level}
-        </p>
-      </div>
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
-    </div>
-  );
-}
-
-const nodeTypes = { commitNode: CommitNode, milestoneNode: MilestoneNode };
-
-
-type DisplayItem =
-  | { kind: "commit"; commit: Commit; isLatest: boolean }
-  | { kind: "milestone"; level: number };
-
-function buildGraph(commits: Commit[], token: string, repoName: string): Node[] {
-  const oldestFirst = [...commits].reverse();
-  const newestSha   = commits[0]?.sha;
-  const items: DisplayItem[] = [];
-
-  for (let i = 0; i < oldestFirst.length; i++) {
-    items.push({ kind: "commit", commit: oldestFirst[i], isLatest: oldestFirst[i].sha === newestSha });
-    if ((i + 1) % 10 === 0 && i < oldestFirst.length - 1) {
-      items.push({ kind: "milestone", level: Math.floor((i + 1) / 10) });
+  for (let i = 0; i < mainCommits.length - 1; i++) {
+    const curr = new Date(mainCommits[i].date).getTime();
+    const next = new Date(mainCommits[i + 1].date).getTime();
+    if (d <= curr && d > next) {
+      const frac = curr === next ? 0 : (curr - d) / (curr - next);
+      return (i + frac) * ROW_H;
     }
   }
-
-  items.reverse(); // newest = index 0 = top (small y)
-
-  return items.map((item, i) => {
-    const x = i % 2 === 0 ? ZIG_X : -ZIG_X;
-    const y = i * SPACING_Y;
-    if (item.kind === "milestone") {
-      return { id: `milestone-${item.level}`, type: "milestoneNode", position: { x, y }, data: { level: item.level }, draggable: false };
-    }
-    return {
-      id: item.commit.sha, type: "commitNode", position: { x, y },
-      data: { ...item.commit, repoName, token, isLatest: item.isLatest },
-      draggable: false,
-    };
-  });
+  return (mainCommits.length - 0.5) * ROW_H;
 }
 
+function detectDefaultBranch(mainCommits: Commit[], branches: BranchData[]): string {
+  const sha = mainCommits[0]?.sha;
+  if (sha) {
+    const m = branches.find(b => b.sha === sha);
+    if (m) return m.name;
+  }
+  return branches.find(b => b.name === "main" || b.name === "master")?.name ?? "main";
+}
 
-function CommitModal({ detail, loading, onClose }: {
-  detail: CommitDetail | null;
-  loading: boolean;
-  onClose: () => void;
-}) {
+// ── Graph builder ─────────────────────────────────────────────────────────
+
+function buildGraph(
+  mainCommits: Commit[],
+  allBranches: BranchData[],
+  defaultBranch: string,
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+
+  const featureBranches = allBranches
+    .filter(b => b.name !== defaultBranch && b.commits?.length)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 3);
+
+  // ── Main lane ──
+  mainCommits.forEach((commit, i) => {
+    const isHead      = i === 0;
+    const isMilestone = (i + 1) % 10 === 0 && i < mainCommits.length - 1;
+    nodes.push({
+      id: `m-${commit.sha}`,
+      type: "commitNode",
+      position: { x: 0, y: i * ROW_H },
+      data: {
+        sha: commit.sha, message: commit.message,
+        date: commit.date, author: commit.author,
+        isHead, isBranchHead: false,
+        color: LANE_COLORS[0],
+        milestone: isMilestone ? Math.floor((i + 1) / 10) : 0,
+      },
+      draggable: false,
+    });
+
+    if (i > 0) {
+      edges.push({
+        id: `me-${i}`,
+        source: `m-${mainCommits[i - 1].sha}`,
+        target: `m-${commit.sha}`,
+        sourceHandle: "bottom",
+        targetHandle: "top",
+        type: "straight",
+        style: { stroke: LANE_COLORS[0], strokeWidth: 2.5, opacity: 0.5 },
+        animated: i === 1, // pulse on the head→head-1 connection
+      });
+    }
+  });
+
+  // Main branch label
+  if (mainCommits.length) {
+    nodes.push({
+      id: "lbl-main",
+      type: "branchLabelNode",
+      position: { x: 0, y: -ROW_H * 0.65 - 52 },
+      data: { name: defaultBranch, color: LANE_COLORS[0], isMain: true },
+      draggable: false,
+    });
+  }
+
+  // ── Feature branches ──
+  featureBranches.forEach((branch, bi) => {
+    const color  = LANE_COLORS[bi + 1];
+    const laneX  = (bi + 1) * LANE_W;
+    const bCmts  = branch.commits;
+    const ids: string[] = [];
+
+    bCmts.forEach((commit, j) => {
+      const y  = dateToY(commit.date, mainCommits);
+      const id = `b${bi}-${j}`;
+      ids.push(id);
+
+      nodes.push({
+        id,
+        type: "commitNode",
+        position: { x: laneX, y },
+        data: {
+          sha: commit.sha, message: commit.message,
+          date: commit.date, author: commit.author,
+          isHead: false,
+          isBranchHead: j === 0,
+          color,
+          milestone: 0,
+        },
+        draggable: false,
+      });
+
+      if (j > 0) {
+        edges.push({
+          id: `be${bi}-${j}`,
+          source: ids[j - 1],
+          target: id,
+          sourceHandle: "bottom",
+          targetHandle: "top",
+          type: "straight",
+          style: { stroke: color, strokeWidth: 2, opacity: 0.6 },
+        });
+      }
+    });
+
+    // Fork edge: main divergence → oldest branch commit
+    const oldestY    = dateToY(bCmts[bCmts.length - 1].date, mainCommits);
+    const divergeIdx = Math.min(Math.max(0, Math.round(oldestY / ROW_H)), mainCommits.length - 1);
+    edges.push({
+      id: `fork-${bi}`,
+      source: `m-${mainCommits[divergeIdx].sha}`,
+      target: ids[ids.length - 1],
+      sourceHandle: "right",
+      targetHandle: "left",
+      type: "default",
+      style: { stroke: color, strokeWidth: 1.75, strokeDasharray: "7 4", opacity: 0.8 },
+    });
+
+    // Branch label above head commit
+    const headY = dateToY(bCmts[0].date, mainCommits);
+    nodes.push({
+      id: `lbl-${bi}`,
+      type: "branchLabelNode",
+      position: { x: laneX, y: headY - 56 },
+      data: { name: branch.name, color, isMain: false },
+      draggable: false,
+    });
+  });
+
+  return { nodes, edges };
+}
+
+// ── Node: commit ──────────────────────────────────────────────────────────
+
+function CommitNode({ data }: NodeProps) {
+  const d = data as unknown as {
+    sha: string; message: string; date: string; author: string;
+    isHead: boolean; isBranchHead: boolean; color: string; milestone: number;
+  };
+
+  const w = d.isHead ? HEAD_W : NODE_W;
+  const h = d.isHead ? HEAD_H : NODE_H;
+
+  return (
+    <div style={{ width: w, height: h, cursor: "pointer", position: "relative" }}>
+      <Handle id="top"    type="target" position={Position.Top}    style={{ opacity: 0 }} />
+      <Handle id="left"   type="target" position={Position.Left}   style={{ opacity: 0 }} />
+      <Handle id="bottom" type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <Handle id="right"  type="source" position={Position.Right}  style={{ opacity: 0 }} />
+
+      <div style={{
+        width: "100%", height: "100%",
+        borderRadius: 14,
+        border: `2.5px solid ${d.color}`,
+        background: d.isHead
+          ? `color-mix(in oklch, ${d.color} 11%, var(--color-base-200))`
+          : "var(--color-base-200)",
+        boxShadow: d.isHead
+          ? `0 0 32px color-mix(in oklch, ${d.color} 55%, transparent), 0 0 64px color-mix(in oklch, ${d.color} 20%, transparent), 0 6px 20px rgba(0,0,0,0.32)`
+          : "0 3px 10px rgba(0,0,0,0.18)",
+        padding: "10px 14px",
+        overflow: "hidden",
+        position: "relative",
+      }}>
+
+        {/* HEAD badge */}
+        {d.isHead && (
+          <div style={{
+            position: "absolute", top: 8, right: 9,
+            background: d.color, color: "white",
+            fontSize: 8, fontWeight: 900, fontFamily: "monospace",
+            letterSpacing: "0.08em", padding: "2px 7px", borderRadius: 5,
+          }}>HEAD</div>
+        )}
+
+        {/* Branch-head dot */}
+        {d.isBranchHead && !d.isHead && (
+          <div style={{
+            position: "absolute", top: 9, right: 10,
+            width: 7, height: 7, borderRadius: "50%",
+            background: d.color,
+            boxShadow: `0 0 8px ${d.color}88`,
+          }} />
+        )}
+
+        {/* Milestone badge */}
+        {d.milestone > 0 && (
+          <div style={{
+            position: "absolute", top: 8, right: 9,
+            fontSize: 9, fontWeight: 900,
+            letterSpacing: "0.05em", padding: "2px 7px", borderRadius: 5,
+            background: "#f59e0b22", color: "#f59e0b",
+            border: "1px solid #f59e0b66",
+          }}>⭐ LVL {d.milestone}</div>
+        )}
+
+        {/* SHA + meta */}
+        <p style={{
+          fontFamily: "monospace", fontSize: 10,
+          color: d.color, opacity: 0.9, marginBottom: 5,
+        }}>
+          {d.sha.slice(0, 7)} · {timeAgo(d.date)}
+        </p>
+
+        {/* Message */}
+        <p style={{
+          fontSize: d.isHead ? 12 : 11, fontWeight: 900,
+          color: d.isHead ? d.color : "var(--color-base-content)",
+          opacity: d.isHead ? 1 : 0.85,
+          lineHeight: 1.35,
+          overflow: "hidden",
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+        }}>
+          {d.message}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Node: branch label pill ───────────────────────────────────────────────
+
+function BranchLabelNode({ data }: NodeProps) {
+  const d = data as unknown as { name: string; color: string; isMain: boolean };
+  return (
+    <div style={{
+      padding: "5px 14px 5px 10px",
+      borderRadius: 20,
+      border: `1.5px solid ${d.color}`,
+      background: `color-mix(in oklch, ${d.color} 10%, var(--color-base-200))`,
+      color: d.color,
+      fontSize: 11, fontWeight: 900, fontFamily: "monospace",
+      whiteSpace: "nowrap",
+      display: "flex", alignItems: "center", gap: 6,
+      cursor: "default",
+      boxShadow: `0 0 16px color-mix(in oklch, ${d.color} 22%, transparent), 0 2px 6px rgba(0,0,0,0.15)`,
+    }}>
+      <Handle id="bottom" type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      {d.isMain ? "⎇" : "⎇"} {d.name}
+    </div>
+  );
+}
+
+const nodeTypes = { commitNode: CommitNode, branchLabelNode: BranchLabelNode };
+
+// ── Commit detail modal ───────────────────────────────────────────────────
+
+function CommitModal({
+  detail, loading, onClose,
+}: { detail: CommitDetail | null; loading: boolean; onClose: () => void }) {
   const xp = detail ? calcXP(detail) : null;
 
   useEffect(() => {
@@ -171,16 +369,12 @@ function CommitModal({ detail, loading, onClose }: {
   }, [onClose]);
 
   return createPortal(
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-5 bg-black/50 backdrop-blur-sm"
-    >
-      <div
-        onClick={e => e.stopPropagation()}
+    <div onClick={onClose}
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-5 bg-black/50 backdrop-blur-sm">
+      <div onClick={e => e.stopPropagation()}
         className="w-full max-w-[440px] bg-base-200 border border-base-300 rounded-2xl p-5 shadow-2xl"
-        style={{ boxShadow: "0 24px 64px rgba(0,0,0,0.4)" }}
-      >
-        {/* Header */}
+        style={{ boxShadow: "0 24px 64px rgba(0,0,0,0.4)" }}>
+
         <div className="flex justify-between items-start mb-3">
           <div className="flex gap-2 items-center flex-wrap">
             {detail && <>
@@ -200,7 +394,9 @@ function CommitModal({ detail, loading, onClose }: {
           <div className="flex gap-3 mb-3">
             <span className="font-black text-green-500 text-xs">+{detail.additions}</span>
             <span className="font-black text-red-500 text-xs">-{detail.deletions}</span>
-            <span className="font-bold text-base-content/40 text-xs">{detail.files.length} file{detail.files.length !== 1 ? "s" : ""}</span>
+            <span className="font-bold text-base-content/40 text-xs">
+              {detail.files.length} file{detail.files.length !== 1 ? "s" : ""}
+            </span>
           </div>
 
           <div className="flex flex-col gap-1.5 mb-4 max-h-48 overflow-y-auto">
@@ -219,67 +415,69 @@ function CommitModal({ detail, loading, onClose }: {
           <div className="flex justify-between items-center border-t border-base-300 pt-3">
             <div>
               <p className="font-bold text-base-content/40 text-[10px] mb-1">Base XP breakdown</p>
-              <p className="font-bold text-base-content/25 text-[9px]">
-                10 base + 2 * {detail.files.length} files
-              </p>
+              <p className="font-bold text-base-content/25 text-[9px]">10 base + 2 × {detail.files.length} files</p>
             </div>
             <span className="font-black text-2xl" style={{ color: "var(--game-accent)" }}>+{xp} XP</span>
           </div>
         </>}
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }
 
+// ── Page ──────────────────────────────────────────────────────────────────
 
 export default function RepoDetailPage() {
   const params   = useParams();
   const repoName = params.name as string;
   const { token, logout } = useAuth();
 
-  const [commits, setCommits]           = useState<Commit[]>([]);
+  const [mainCommits, setMainCommits] = useState<Commit[]>([]);
+  const [branches,    setBranches]    = useState<BranchData[]>([]);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
-  const [, , onEdgesChange]              = useEdgesState<Edge>([]);
-  const [selectedSha, setSelectedSha]   = useState<string | null>(null);
-  const [modalDetail, setModalDetail]   = useState<CommitDetail | null>(null);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [selectedSha,  setSelectedSha]  = useState<string | null>(null);
+  const [modalDetail,  setModalDetail]  = useState<CommitDetail | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const rfRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
 
-  const closeModal = useCallback(() => setSelectedSha(null), []);
-
-  // Handle node click — must be on ReactFlow, not inside the node
+  const closeModal  = useCallback(() => setSelectedSha(null), []);
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    if (node.type === "commitNode") setSelectedSha(node.id);
+    if (node.type === "commitNode") setSelectedSha((node.data as { sha: string }).sha);
   }, []);
 
-  // Fetch commit list
+  // Fetch main commits + branches in parallel
   useEffect(() => {
     if (!token) return;
-    fetch(`${API_URL}/api/github/repos/${repoName}/commits`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => { if (r.status === 401) { logout(); return; } if (!r.ok) return; return r.json(); })
-      .then((data?: Commit[]) => { if (data) setCommits(data); })
+    const h = { Authorization: `Bearer ${token}` };
+
+    fetch(`${API_URL}/api/github/repos/${repoName}/commits`, { headers: h })
+      .then(r => { if (r.status === 401) logout(); return r.ok ? r.json() : []; })
+      .then((d: Commit[]) => setMainCommits(d))
+      .catch(() => {});
+
+    fetch(`${API_URL}/api/github/repos/${repoName}/branches`, { headers: h })
+      .then(r => r.ok ? r.json() : [])
+      .then((d: BranchData[]) => setBranches(d))
       .catch(() => {});
   }, [token, repoName, logout]);
 
-  // Build graph + fit to newest nodes
+  // Rebuild graph whenever data arrives
   useEffect(() => {
-    if (!commits.length || !token) return;
-    const n = buildGraph(commits, token, repoName);
+    if (!mainCommits.length) return;
+    const defaultBranch = detectDefaultBranch(mainCommits, branches);
+    const { nodes: n, edges: e } = buildGraph(mainCommits, branches, defaultBranch);
     setNodes(n);
-    setTimeout(() => {
-      rfRef.current?.fitView({
-        nodes: n.slice(0, 5).map(node => ({ id: node.id })),
-        padding: 0.4,
-        duration: 400,
-        maxZoom: 1.5,
-      });
-    }, 50);
-  }, [commits, token, repoName, setNodes]);
+    setEdges(e);
 
-  // Fetch commit detail when selected
+    setTimeout(() => {
+      const topNodes = n.filter(x => x.id.startsWith("m-")).slice(0, 6);
+      rfRef.current?.fitView({ nodes: topNodes, padding: 0.4, duration: 500, maxZoom: 1.2 });
+    }, 60);
+  }, [mainCommits, branches, setNodes, setEdges]);
+
+  // Fetch commit detail on click
   useEffect(() => {
     if (!selectedSha || !token) return;
     setModalDetail(null);
@@ -288,34 +486,47 @@ export default function RepoDetailPage() {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) setModalDetail(data); })
+      .then(d => { if (d) setModalDetail(d); })
       .catch(() => {})
       .finally(() => setModalLoading(false));
   }, [selectedSha, token, repoName]);
 
-  const levelsReached = Math.floor(commits.length / 10);
+  const defaultBranch    = detectDefaultBranch(mainCommits, branches);
+  const featureBranchCnt = branches.filter(b => b.name !== defaultBranch).length;
 
   return (
     <div className="relative w-full h-screen bg-base-100">
 
       {/* Header */}
       <div className="absolute top-0 inset-x-0 z-20 flex items-center gap-3 px-5 py-3.5 bg-base-100/90 backdrop-blur border-b border-base-300">
-        <Link href="/dashboard/repos" className="text-base-content/40 hover:text-base-content/70 transition-colors flex items-center">
+        <Link href="/dashboard/repos" className="text-base-content/40 hover:text-base-content/70 transition-colors">
           <ArrowLeft size={18} />
         </Link>
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="font-black text-xl text-base-content leading-none">⚔️ {repoName}</h1>
           <p className="font-bold text-[11px] text-base-content/40 mt-0.5">
-            {commits.length === 0
+            {mainCommits.length === 0
               ? "Loading commits…"
-              : `${commits.length} commits · ${levelsReached} level${levelsReached !== 1 ? "s" : ""} reached`}
+              : `${mainCommits.length} commits · ${defaultBranch}`}
           </p>
         </div>
+        {featureBranchCnt > 0 && (
+          <div
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black"
+            style={{
+              color: "var(--game-accent)",
+              background: "color-mix(in oklch, var(--game-accent) 12%, transparent)",
+            }}
+          >
+            <GitBranch size={12} />
+            {featureBranchCnt} branch{featureBranchCnt > 1 ? "es" : ""}
+          </div>
+        )}
       </div>
 
       <ReactFlow
         nodes={nodes}
-        edges={[]}
+        edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
@@ -323,17 +534,17 @@ export default function RepoDetailPage() {
         onInit={instance => { rfRef.current = instance; }}
         onNodeClick={onNodeClick}
         fitView={false}
-        defaultViewport={{ x: 0, y: 80, zoom: 1 }}
+        defaultViewport={{ x: 300, y: 120, zoom: 1 }}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
         panOnScroll
         zoomOnScroll={false}
-        style={{ background: "transparent" }}
+        style={{ background: "transparent", paddingTop: 56 }}
       >
         <Background
           color="var(--color-base-content)"
-          style={{ opacity: 0.05 }}
+          style={{ opacity: 0.045 }}
           gap={28}
         />
       </ReactFlow>

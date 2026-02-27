@@ -38,3 +38,4 @@ class LeetCodeSolve(Base):
     code: Mapped[str | None] = mapped_column(Text, nullable=True)
     time_complexity: Mapped[str | None] = mapped_column(String(64), nullable=True)   # O(n), O(n^2) etc.
     space_complexity: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-5

@@ -4,13 +4,15 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.models.xp_event import XPEvent
+from app.schemas.xp_event import XPEventOut
 from app.services import sse_service
 from app.services.sse_service import connect, disconnect
 
@@ -63,6 +65,34 @@ async def event_stream(current_user: User = Depends(_user_from_token)):
             "Connection": "keep-alive",
         },
     )
+
+
+@router.get("/unread", response_model=list[XPEventOut])
+async def get_unread_events(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return XP events that were earned while the user was offline."""
+    result = await db.execute(
+        select(XPEvent)
+        .where(XPEvent.user_id == current_user.id, XPEvent.notified == False)  # noqa: E712
+        .order_by(XPEvent.created_at.asc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/mark-read", status_code=204)
+async def mark_events_read(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark all unread XP events as notified."""
+    await db.execute(
+        update(XPEvent)
+        .where(XPEvent.user_id == current_user.id, XPEvent.notified == False)  # noqa: E712
+        .values(notified=True)
+    )
+    await db.commit()
 
 
 @router.post("/dev/test-xp")

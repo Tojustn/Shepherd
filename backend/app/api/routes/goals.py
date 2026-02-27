@@ -55,6 +55,7 @@ async def create_goal(
         type=GoalType.CUSTOM,
         target=payload.target,
         label=payload.label,
+        difficulty=payload.difficulty,
     )
     db.add(goal)
     await db.commit()
@@ -80,7 +81,7 @@ async def complete_goal(
 
     goal.completed = True
     goal.completed_at = datetime.now(timezone.utc)
-    xp_awarded = await award_xp(db, user, XPSource.GOAL_COMPLETE, meta={"difficulty": goal.difficulty})
+    xp_awarded = await award_xp(db, user, XPSource.GOAL_COMPLETE, meta={"kind": "custom", "difficulty": goal.difficulty})
     await db.commit()
     await db.refresh(goal)
     await cache_delete(f"user:me:{user.id}")
@@ -108,7 +109,7 @@ async def increment_goal(
     await update_goal(goal_id=goal.id, user=user, db=db, new_value=goal.current + 1)
 
     if goal.completed:
-        await award_xp(db, user, XPSource.GOAL_COMPLETE, meta={"kind": "custom"})
+        await award_xp(db, user, XPSource.GOAL_COMPLETE, meta={"kind": "custom", "difficulty": goal.difficulty})
 
     await db.commit()
     await db.refresh(goal)

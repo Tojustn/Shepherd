@@ -26,9 +26,14 @@ class UserOut(BaseModel):
     recent_goals: list[GoalOut]
     daily_quests: list[GoalOut]
     pending_level_up: bool
+    onboarding_complete: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ProfileUpdate(BaseModel):
+    username: str | None = None
 
 
 class TokenOut(BaseModel):

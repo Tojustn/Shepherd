@@ -46,7 +46,7 @@ def _verify_signature(body: bytes, signature_header: str | None) -> bool:
 
 
 async def _resolve_user(db: AsyncSession, username: str) -> User | None:
-    result = await db.execute(select(User).where(User.username == username))
+    result = await db.execute(select(User).where(User.github_login == username))
     return result.scalar_one_or_none()
 
 

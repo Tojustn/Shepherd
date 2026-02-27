@@ -1,18 +1,40 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/auth";
-import { LevelUpBanner } from "@/components/LevelUpBanner";
+import { useXPContext } from "@/context/xp";
 import { XPBar } from "@/components/XPBar";
 import { GoalPreviewCard } from "@/components/GoalPreviewCard";
 import { StreakCard, StreakInfo } from "@/components/StreakCard";
 import { Goal } from "@/components/CreateGoalForm";
-import { XPToast, XPToastItem } from "@/components/XPToast";
-import { useXPEvents, formatXPSource } from "@/hooks/useXPEvents";
-import { Zap, Target, Flame, ArrowRight } from "lucide-react";
+import { Zap, Target, Flame, ArrowRight, Code2 } from "lucide-react";
+import { XPCatchUpBanner } from "@/components/XPCatchUpBanner";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+interface RecentSolve {
+  id: number;
+  problem: { leetcode_id: number; title: string; difficulty: string };
+  language: string | null;
+  confidence: number | null;
+  solved_at: string;
+}
+
+const DIFF_COLORS: Record<string, string> = {
+  easy: "#22c55e",
+  medium: "#f59e0b",
+  hard: "#ef4444",
+};
+
+function timeAgo(dateStr: string) {
+  const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return days === 1 ? "1d ago" : `${days}d ago`;
+}
 
 interface User {
   id: number;
@@ -45,36 +67,28 @@ function SectionHeader({ icon, color, label, right }: { icon: React.ReactNode; c
 
 export default function Dashboard() {
   const { token } = useAuth();
+  const { subscribe, triggerLevelUp } = useXPContext();
   const [user, setUser] = useState<User | null>(null);
-  const [showLevelUp, setShowLevelUp] = useState(false);
-  const [toasts, setToasts] = useState<XPToastItem[]>([]);
-  const toastId = useRef(0);
+  const [recentSolves, setRecentSolves] = useState<RecentSolve[]>([]);
 
-  useXPEvents(token, (event) => {
-    const id = ++toastId.current;
-    setToasts((prev) => [...prev, { id, amount: event.amount, source: formatXPSource(event.source) }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2800);
-    setUser((u) => u ? { ...u, xp: event.total_xp, level: event.new_level } : u);
-    if (event.level_up) setShowLevelUp(true);
-  });
+  useEffect(() => {
+    return subscribe((event) => {
+      setUser((u) => u ? { ...u, xp: event.total_xp, level: event.new_level } : u);
+    });
+  }, [subscribe]);
 
   useEffect(() => {
     if (!token) return;
-    fetch(`${API_URL}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((data: User) => {
         setUser(data);
-        if (data.pending_level_up) {
-          setShowLevelUp(true);
-          fetch(`${API_URL}/api/auth/clear-level-up`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-          });
-        }
+        if (data.pending_level_up) triggerLevelUp(data.level);
       });
-  }, [token]);
+    fetch(`${API_URL}/api/leetcode/solves`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: RecentSolve[]) => setRecentSolves(data.slice(0, 5)));
+  }, [token, triggerLevelUp]);
 
   if (!user) return <p className="p-8 text-base-content/40 font-mono">Loading...</p>;
 
@@ -83,10 +97,7 @@ export default function Dashboard() {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-10 flex flex-col gap-8">
-      <XPToast toasts={toasts} />
-      {showLevelUp && (
-        <LevelUpBanner level={user.level} onDismiss={() => setShowLevelUp(false)} />
-      )}
+      <XPCatchUpBanner token={token} />
 
       {/* Profile card */}
       <div
@@ -187,6 +198,69 @@ export default function Dashboard() {
           <StreakCard label="LeetCode" streak={user.leetcode_streak} />
         </div>
 
+      </div>
+
+      {/* Recent LeetCode */}
+      <div className="flex flex-col gap-4">
+        <SectionHeader
+          icon={<Code2 size={16} />}
+          color="#f59e0b"
+          label="Recent LeetCode"
+          right={
+            <Link
+              href="/dashboard/leetcode"
+              className="flex items-center gap-1 text-sm font-bold text-base-content/40 hover:text-base-content transition-colors"
+            >
+              View all <ArrowRight size={14} />
+            </Link>
+          }
+        />
+
+        {recentSolves.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-8 text-base-content/25">
+            <Code2 size={32} />
+            <p className="text-sm font-bold">No solves logged yet.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {recentSolves.map((solve) => {
+              const diff = solve.problem.difficulty.toLowerCase();
+              const color = DIFF_COLORS[diff] ?? "var(--game-accent)";
+              return (
+                <div
+                  key={solve.id}
+                  className="rounded-xl bg-base-100 border-2 border-base-300 px-4 py-3 flex items-center gap-3"
+                  style={{ boxShadow: "0 3px 0 rgba(0,0,0,0.08)" }}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full shrink-0"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="font-black text-sm text-base-content/40 font-mono shrink-0">
+                    #{solve.problem.leetcode_id}
+                  </span>
+                  <span className="font-bold text-sm text-base-content flex-1 truncate">
+                    {solve.problem.title}
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {solve.language && (
+                      <span className="text-xs font-bold text-base-content/40">{solve.language}</span>
+                    )}
+                    <span
+                      className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full"
+                      style={{ backgroundColor: color + "22", color, border: `1px solid ${color}55` }}
+                    >
+                      {diff}
+                    </span>
+                    <span className="text-xs font-bold text-base-content/30 font-mono">
+                      {timeAgo(solve.solved_at)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

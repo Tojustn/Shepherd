@@ -11,7 +11,7 @@ from app.models.goal import Goal, GoalType
 from app.schemas.goal import GoalOut
 from app.models.streak import Streak, StreakType
 from app.models.user import User
-from app.schemas.user import StreakInfo, UserOut
+from app.schemas.user import StreakInfo, UserOut, ProfileUpdate
 from app.services.xp_service import xp_for_level
 from app.services.cache import cache_get, cache_set, cache_delete
 from app.services.goal_service import ensure_daily_goals
@@ -62,14 +62,16 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
 
     if user:
-        user.username = github_user["login"]
+        # Always update the immutable GitHub login in case they renamed on GitHub
+        user.github_login = github_user["login"]
         user.email = github_user.get("email")
         user.avatar_url = github_user.get("avatar_url")
         user.github_access_token = access_token
     else:
         user = User(
             github_id=github_id,
-            username=github_user["login"],
+            github_login=github_user["login"],
+            username=github_user["login"],  # display name defaults to GitHub login
             email=github_user.get("email"),
             avatar_url=github_user.get("avatar_url"),
             github_access_token=access_token,
@@ -123,6 +125,7 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         "recent_goals": [GoalOut.model_validate(g) for g in recent_goals],
         "daily_quests": [GoalOut.model_validate(g) for g in daily_quests],
         "pending_level_up": user.pending_level_up,
+        "onboarding_complete": user.onboarding_complete,
         "created_at": user.created_at,
     }
 
@@ -135,6 +138,37 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
 async def clear_level_up(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     user.pending_level_up = False
     await db.commit()
+    await cache_delete(f"user:me:{user.id}")
+
+
+@router.post("/complete-onboarding", status_code=204)
+async def complete_onboarding(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    user.onboarding_complete = True
+    await db.commit()
+    await cache_delete(f"user:me:{user.id}")
+
+
+@router.patch("/profile", status_code=204)
+async def update_profile(
+    payload: ProfileUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if payload.username is not None:
+        stripped = payload.username.strip()
+        if not stripped:
+            raise HTTPException(status_code=422, detail="Username cannot be empty")
+        user.username = stripped
+    await db.commit()
+    await cache_delete(f"user:me:{user.id}")
+
+
+@router.delete("/account", status_code=204)
+async def delete_account(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    cache_key = f"user:me:{user.id}"
+    await db.delete(user)
+    await db.commit()
+    await cache_delete(cache_key)
 
 
 @router.post("/logout")

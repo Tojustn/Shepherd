@@ -2,15 +2,18 @@
 
 import { useEffect, useState } from "react";
 
+const MAX_LEVEL = 50;
+
 export function XPBar({ xp, xpCurrentLevel, xpNextLevel, level }: {
   xp: number;
   xpCurrentLevel: number;
   xpNextLevel: number;
   level: number;
 }) {
+  const isMax = level >= MAX_LEVEL;
   const progress = xp - xpCurrentLevel;
   const range = xpNextLevel - xpCurrentLevel;
-  const pct = Math.min(Math.round((progress / range) * 100), 100);
+  const pct = isMax ? 100 : Math.min(Math.round((progress / range) * 100), 100);
 
   const [animPct, setAnimPct] = useState(0);
   useEffect(() => {
@@ -41,9 +44,13 @@ export function XPBar({ xp, xpCurrentLevel, xpNextLevel, level }: {
       </div>
 
       <div className="flex flex-col gap-1 min-w-0">
-        <p className="font-mono text-base font-bold text-base-content">{progress.toLocaleString()} XP</p>
-        <p className="font-mono text-sm font-semibold text-base-content/50">{(xpNextLevel - xp).toLocaleString()} to level {level + 1}</p>
-        <p className="font-mono text-sm text-base-content/40">{pct}% complete</p>
+        <p className="font-mono text-base font-bold text-base-content">{xp.toLocaleString()} XP</p>
+        {isMax ? (
+          <p className="font-mono text-sm font-semibold" style={{ color: "var(--game-accent)" }}>MAX LEVEL</p>
+        ) : (
+          <p className="font-mono text-sm font-semibold text-base-content/50">{(xpNextLevel - xp).toLocaleString()} to level {level + 1}</p>
+        )}
+        <p className="font-mono text-sm text-base-content/40">{isMax ? "100" : pct}% complete</p>
       </div>
     </div>
   );

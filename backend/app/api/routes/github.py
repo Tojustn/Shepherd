@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.core.security import get_current_user
 from app.models.user import User
 from app.services.cache import cache_get, cache_set
-from app.services.github_service import fetch_commit_detail, fetch_commits, fetch_events, fetch_repos
+from app.services.github_service import fetch_branches, fetch_commit_detail, fetch_commits, fetch_events, fetch_repos
 
 router = APIRouter(prefix="/github", tags=["github"])
 
@@ -79,6 +79,27 @@ async def get_repo_commits(repo_name: str, user: User = Depends(get_current_user
 
     await cache_set(cache_key, commits, ttl=REPOS_TTL)
     return commits
+
+
+@router.get("/repos/{repo_name}/branches")
+async def get_repo_branches(repo_name: str, user: User = Depends(get_current_user)):
+    if not user.github_access_token:
+        raise HTTPException(status_code=400, detail="No GitHub token on file")
+
+    cache_key = f"github:branches:{user.id}:{repo_name}"
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        branches = await fetch_branches(user.github_access_token, user.username, repo_name)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            raise HTTPException(status_code=401, detail="GitHub token expired — please log in again")
+        raise HTTPException(status_code=502, detail="GitHub API error")
+
+    await cache_set(cache_key, branches, ttl=REPOS_TTL)
+    return branches
 
 
 @router.get("/repos/{repo_name}/commits/{sha}")

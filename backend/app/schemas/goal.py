@@ -1,6 +1,7 @@
 from datetime import date, datetime
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.goal import GoalType
 
@@ -8,6 +9,7 @@ from app.models.goal import GoalType
 class GoalCreate(BaseModel):
     label: str
     target: int = 1  # 1 = checkbox, >1 = counter
+    difficulty: Annotated[int, Field(ge=1, le=5)] = 1
 
 
 class GoalOut(BaseModel):
@@ -17,6 +19,7 @@ class GoalOut(BaseModel):
     target: int
     current: float
     label: str
+    difficulty: int
     active: bool
     goal_date: date | None
     completed: bool

@@ -141,15 +141,12 @@ export default function QuestBoardPage() {
                     >
                       {status.label}
                     </span>
-                    <a
-                      href={repo.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
+                    <button
+                      onClick={e => { e.preventDefault(); e.stopPropagation(); window.open(repo.url, "_blank", "noopener,noreferrer"); }}
                       className="text-base-content/20 hover:text-base-content/60 transition-colors"
                     >
                       <ExternalLink size={12} />
-                    </a>
+                    </button>
                   </div>
                 </div>
 

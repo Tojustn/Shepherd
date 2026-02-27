@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, JSON, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, JSON, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -28,6 +28,7 @@ class XPEvent(Base):
     source: Mapped[XPSource] = mapped_column(String(32))
     amount: Mapped[int] = mapped_column(Integer)
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    notified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship("User", back_populates="xp_events")

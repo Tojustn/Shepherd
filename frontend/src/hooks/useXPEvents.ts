@@ -12,15 +12,22 @@ export interface XPEvent {
   total_xp: number;
 }
 
-const SOURCE_LABELS: Record<string, string> = {
-  commit:         "GitHub commit",
-  leetcode_solve: "LeetCode",
-  goal_complete:  "Goal complete",
-  streak_bonus:   "Streak bonus",
-};
-
-export function formatXPSource(source: string): string {
-  return SOURCE_LABELS[source] ?? source;
+export function formatXPSource(source: string, meta?: Record<string, unknown> | null): string {
+  if (source === "commit") {
+    const repo = meta?.repo as string | undefined;
+    const name = repo ? repo.split("/").pop() : undefined;
+    return name ? `GitHub — ${name}` : "GitHub commit";
+  }
+  if (source === "leetcode_solve") {
+    const diff = meta?.difficulty as string | undefined;
+    return diff ? `LeetCode ${diff.charAt(0).toUpperCase() + diff.slice(1)}` : "LeetCode";
+  }
+  if (source === "goal_complete") {
+    const kind = meta?.kind as string | undefined;
+    return kind === "daily" ? "Daily quest" : "Goal complete";
+  }
+  if (source === "streak_bonus") return "Streak bonus";
+  return source.replace(/_/g, " ");
 }
 
 export function useXPEvents(

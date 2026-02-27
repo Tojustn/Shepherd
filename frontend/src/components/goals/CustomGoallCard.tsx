@@ -1,9 +1,25 @@
 // components/goals/CustomGoalCard.tsx
 "use client";
 
-import { CheckCircle, Circle, Trash2 } from "lucide-react";
-import { Goal } from "@/components/CreateGoalForm";
+import { CheckCircle, Circle, Star, Trash2 } from "lucide-react";
+import { Goal, DIFFICULTY_XP } from "@/components/CreateGoalForm";
 import { useGoalMutations } from "@/hooks/useGoalMutations";
+
+function DifficultyStars({ difficulty }: { difficulty: number }) {
+  return (
+    <div className="flex gap-0.5">
+      {[1, 2, 3, 4, 5].map((s) => (
+        <Star
+          key={s}
+          size={11}
+          strokeWidth={1.5}
+          fill={s <= difficulty ? "var(--game-accent)" : "transparent"}
+          style={{ color: s <= difficulty ? "var(--game-accent)" : "oklch(var(--bc)/0.2)" }}
+        />
+      ))}
+    </div>
+  );
+}
 
 export function CustomGoalCard({ goal, token }: { goal: Goal; token: string }) {
   const { complete, increment, remove } = useGoalMutations(goal.id, token);
@@ -11,6 +27,7 @@ export function CustomGoalCard({ goal, token }: { goal: Goal; token: string }) {
   const isDone = goal.completed || goal.current >= goal.target;
   const pct = Math.min((goal.current / goal.target) * 100, 100);
   const a = "var(--game-accent)";
+  const xp = DIFFICULTY_XP[goal.difficulty] ?? 20;
 
   return (
     <div
@@ -21,11 +38,14 @@ export function CustomGoalCard({ goal, token }: { goal: Goal; token: string }) {
       }}
     >
       <div className="flex items-start justify-between gap-2">
-        <div>
+        <div className="flex flex-col gap-1">
           <p className={`font-black text-base ${isDone ? "line-through text-base-content/40" : "text-base-content"}`}>
             {goal.label}
           </p>
-          <p className="text-xs font-bold mt-0.5" style={{ color: a, opacity: 0.8 }}>+20 XP</p>
+          <div className="flex items-center gap-2">
+            <DifficultyStars difficulty={goal.difficulty} />
+            <p className="text-xs font-bold" style={{ color: a, opacity: 0.8 }}>+{xp} XP</p>
+          </div>
         </div>
         <button
           onClick={() => remove.mutate(undefined)}

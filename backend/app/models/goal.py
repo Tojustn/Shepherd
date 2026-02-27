@@ -28,6 +28,7 @@ class Goal(Base):
     target: Mapped[int] = mapped_column(Integer)
     current: Mapped[float] = mapped_column(Float, default=0)
     label: Mapped[str] = mapped_column(String(256))
+    difficulty: Mapped[int] = mapped_column(Integer, default=1)  # 1-5 stars
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     goal_date: Mapped[date | None] = mapped_column(Date, nullable=True)  # set for daily goals only
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

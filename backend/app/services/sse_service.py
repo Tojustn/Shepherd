@@ -18,6 +18,10 @@ def disconnect(user_id: int, q: asyncio.Queue) -> None:
         pass
 
 
-async def push(user_id: int, event_type: str, data: dict) -> None:
-    for q in list(_queues.get(user_id, [])):
+async def push(user_id: int, event_type: str, data: dict) -> bool:
+    """Push an event to all active SSE connections for a user.
+    Returns True if delivered to at least one connection (user was online)."""
+    queues = list(_queues.get(user_id, []))
+    for q in queues:
         await q.put({"type": event_type, "data": data})
+    return len(queues) > 0

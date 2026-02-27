@@ -20,6 +20,7 @@ XP_VALUES: dict[XPSource, int] = {
 LEETCODE_XP = {"easy": 20, "medium": 40, "hard": 80}
 
 GOAL_XP = {"daily": 30, "custom": 20}
+GOAL_DIFFICULTY_XP = {1: 20, 2: 35, 3: 50, 4: 75, 5: 100}
 
 DAILY_CAPS: dict[XPSource, int | None] = {
     
@@ -40,13 +41,17 @@ def streak_multiplier(current_streak: int) -> float:
     return 1.0
 
 
+MAX_LEVEL = 50
+
+
 def xp_for_level(level: int) -> int:
-    return 100 * (level - 1)
+    """Total XP required to reach `level`. Quadratic — level 50 ≈ 48k XP."""
+    return 20 * (level - 1) ** 2
 
 
 def compute_level(total_xp: int) -> int:
     level = 1
-    while total_xp >= xp_for_level(level + 1):
+    while level < MAX_LEVEL and total_xp >= xp_for_level(level + 1):
         level += 1
     return level
 
@@ -78,7 +83,11 @@ async def award_xp(
         base_xp = LEETCODE_XP.get(difficulty, 20)
     elif source == XPSource.GOAL_COMPLETE:
         goal_kind = (meta or {}).get("kind", "custom")  # "daily" or "custom"
-        base_xp = GOAL_XP.get(goal_kind, 20)
+        if goal_kind == "daily":
+            base_xp = GOAL_XP["daily"]
+        else:
+            difficulty = (meta or {}).get("difficulty", 1)
+            base_xp = GOAL_DIFFICULTY_XP.get(difficulty, 20)
     elif source == XPSource.COMMIT:
         base_xp = 10 + 2 * meta.get("files_changed", 0) 
     else:
@@ -97,7 +106,8 @@ async def award_xp(
     else:
         awarded = base_xp
         
-    db.add(XPEvent(user_id=user.id, source=source, amount=awarded, meta=meta))
+    event = XPEvent(user_id=user.id, source=source, amount=awarded, meta=meta)
+    db.add(event)
 
     user.xp += awarded
     new_level = compute_level(user.xp)
@@ -106,15 +116,17 @@ async def award_xp(
         user.pending_level_up = True
     user.level = new_level
 
-    await db.flush()
+    await db.flush()  # populate event.id
 
-    await sse_service.push(user.id, "xp_gained", {
+    delivered = await sse_service.push(user.id, "xp_gained", {
         "amount": awarded,
         "source": source.value,
         "level_up": leveled_up,
         "new_level": user.level,
         "total_xp": user.xp,
+        "meta": meta,
     })
+    event.notified = delivered  # mark as notified only if user was online
 
     return awarded
 

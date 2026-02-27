@@ -20,11 +20,12 @@ class LeetCodeSolveCreate(BaseModel):
     slug: str
     difficulty: str  # easy, medium, hard
     topics: list[str] = []
+    code: str          # required
     notes: str | None = None
-    code: str | None = None
     language: str | None = None
     time_complexity: str | None = None
     space_complexity: str | None = None
+    confidence: int | None = None
 
 
 class LeetCodeSolveOut(BaseModel):
@@ -36,8 +37,9 @@ class LeetCodeSolveOut(BaseModel):
     language: str | None
     time_complexity: str | None
     space_complexity: str | None
+    confidence: int | None
     solved_at: datetime
-    xp_awarded: int
+    xp_awarded: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -47,6 +49,7 @@ class LeetCodeSolveUpdate(BaseModel):
     language: str | None = None
     time_complexity: str | None = None
     space_complexity: str | None = None
+    confidence: int | None = None
 
 
 class TopicStat(BaseModel):

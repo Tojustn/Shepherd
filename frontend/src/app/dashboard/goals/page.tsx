@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
-import { Trash2, Plus, CheckCircle, Circle, Zap, Target, ListTodo } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CheckCircle, Circle, ChevronDown, ChevronRight, Zap, Target, ListTodo } from "lucide-react";
 import { useAuth } from "@/context/auth";
 import { CreateGoalForm, Goal } from "@/components/CreateGoalForm";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CustomGoalCard } from "@/components/goals/CustomGoallCard";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -50,11 +50,10 @@ function DailyQuestCard({ goal }: { goal: Goal }) {
   );
 }
 
-
-
 export default function GoalsPage() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
+  const [showCompleted, setShowCompleted] = useState(false);
 
   const { data: dailyGoals = [] } = useQuery({
     queryKey: ["goals", "daily"],
@@ -92,8 +91,12 @@ export default function GoalsPage() {
   const questsDone = dailyGoals.filter((g: Goal) => g.completed || g.current >= g.target).length;
   const allDone = dailyGoals.length > 0 && questsDone === dailyGoals.length;
 
+  const activeGoals = customGoals.filter((g: Goal) => !g.completed && g.current < g.target);
+  const completedGoals = customGoals.filter((g: Goal) => g.completed || g.current >= g.target);
+
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-10 flex flex-col gap-8">
+      {/* Daily Quests */}
       <section className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
           <div className="rounded-lg p-1.5" style={{ backgroundColor: "color-mix(in srgb, var(--color-quest) 20%, transparent)" }}>
@@ -133,6 +136,7 @@ export default function GoalsPage() {
         </div>
       </section>
 
+      {/* Custom Goals */}
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -149,26 +153,50 @@ export default function GoalsPage() {
               boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)",
             }}
           >
-            <Plus size={14} />
-            New Goal
+            + New Goal
           </button>
         </div>
 
         {token && <CreateGoalForm token={token} onCreated={handleCreated} />}
 
-        {customGoals.length === 0 ? (
+        {/* Active goals */}
+        {activeGoals.length === 0 && completedGoals.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-base-content/30">
             <ListTodo size={36} />
             <div className="flex flex-col items-center gap-1">
               <p className="font-black text-sm">No goals yet</p>
-              <p className="text-xs font-semibold">Add a goal to start earning +20 XP per completion.</p>
+              <p className="text-xs font-semibold">Add a goal to start earning XP.</p>
             </div>
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {customGoals.map((goal: Goal) => (
+            {activeGoals.map((goal: Goal) => (
               <CustomGoalCard key={goal.id} goal={goal} token={token!} />
             ))}
+          </div>
+        )}
+
+        {/* Completed goals toggle */}
+        {completedGoals.length > 0 && (
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => setShowCompleted((v) => !v)}
+              className="flex items-center gap-2 text-sm font-black text-base-content/40 hover:text-base-content/60 transition-colors w-fit"
+            >
+              {showCompleted
+                ? <ChevronDown size={16} />
+                : <ChevronRight size={16} />
+              }
+              Completed ({completedGoals.length})
+            </button>
+
+            {showCompleted && (
+              <div className="flex flex-col gap-3">
+                {completedGoals.map((goal: Goal) => (
+                  <CustomGoalCard key={goal.id} goal={goal} token={token!} />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </section>

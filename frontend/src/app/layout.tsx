@@ -3,6 +3,7 @@ import { Nunito } from "next/font/google";
 import { ThemeProvider } from "@/context/theme";
 import { AuthProvider } from "@/context/auth";
 import { QueryProvider } from "@/context/query";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const nunito = Nunito({ subsets: ["latin"], weight: ["400", "600", "700", "800", "900"] });
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <QueryProvider>
             <AuthProvider>{children}</AuthProvider>
           </QueryProvider>
+          <Toaster position="bottom-right" richColors />
         </ThemeProvider>
       </body>
     </html>
