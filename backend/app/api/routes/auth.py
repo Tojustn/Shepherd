@@ -7,13 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token, get_current_user
-from app.models.goal import Goal
+from app.models.goal import Goal, GoalType
 from app.schemas.goal import GoalOut
 from app.models.streak import Streak, StreakType
 from app.models.user import User
 from app.schemas.user import StreakInfo, UserOut
 from app.services.xp_service import xp_for_level
 from app.services.cache import cache_get, cache_set, cache_delete
+from app.services.goal_service import ensure_daily_goals
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -94,11 +95,13 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
 
     goals_result = await db.execute(
         select(Goal)
-        .where(Goal.user_id == user.id, Goal.active == True)
+        .where(Goal.user_id == user.id, Goal.active == True, Goal.type == GoalType.CUSTOM)
         .order_by(Goal.created_at.desc())
-        .limit(2)
+        .limit(3)
     )
     recent_goals = goals_result.scalars().all()
+    daily_quests = await ensure_daily_goals(user, db)
+    await db.commit()
 
     def to_streak_info(s: Streak | None) -> StreakInfo:
         if not s:
@@ -118,6 +121,7 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         "github_streak": to_streak_info(streaks.get(StreakType.GITHUB)),
         "leetcode_streak": to_streak_info(streaks.get(StreakType.LEETCODE)),
         "recent_goals": [GoalOut.model_validate(g) for g in recent_goals],
+        "daily_quests": [GoalOut.model_validate(g) for g in daily_quests],
         "pending_level_up": user.pending_level_up,
         "created_at": user.created_at,
     }

@@ -24,6 +24,7 @@ class UserOut(BaseModel):
     github_streak: StreakInfo
     leetcode_streak: StreakInfo
     recent_goals: list[GoalOut]
+    daily_quests: list[GoalOut]
     pending_level_up: bool
     created_at: datetime
 

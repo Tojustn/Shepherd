@@ -2,7 +2,9 @@
 @plugin "daisyui";
 
 :root {
-  --game-accent: #3b82f6;
+  --game-accent: #4f7cf5;
+  --color-streak: #ff9600;
+  --color-quest: #ffc800;
 }
 
 @keyframes bar-shimmer {

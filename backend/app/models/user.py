@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.goal import Goal
     from app.models.streak import Streak
     from app.models.xp_event import XPEvent
+    from app.models.leetcode import LeetCodeSolve
 
 
 class User(Base):
@@ -36,3 +37,4 @@ class User(Base):
     goals: Mapped[list[Goal]] = relationship("Goal", back_populates="user", cascade="all, delete-orphan")
     streaks: Mapped[list[Streak]] = relationship("Streak", back_populates="user", cascade="all, delete-orphan")
     xp_events: Mapped[list[XPEvent]] = relationship("XPEvent", back_populates="user", cascade="all, delete-orphan")
+    leetcode_solves: Mapped[list["LeetCodeSolve"]] = relationship("LeetCodeSolve", back_populates="user")

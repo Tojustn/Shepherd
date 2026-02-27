@@ -19,7 +19,7 @@ XP_VALUES: dict[XPSource, int] = {
 
 LEETCODE_XP = {"easy": 20, "medium": 40, "hard": 80}
 
-GOAL_DIFFICULTY_XP = {1: 10, 2: 20, 3: 30, 4: 40, 5: 50}
+GOAL_XP = {"daily": 30, "custom": 20}
 
 DAILY_CAPS: dict[XPSource, int | None] = {
     
@@ -77,8 +77,8 @@ async def award_xp(
         difficulty = (meta or {}).get("difficulty", "easy").lower()
         base_xp = LEETCODE_XP.get(difficulty, 20)
     elif source == XPSource.GOAL_COMPLETE:
-        difficulty = (meta or {}).get("difficulty", 1)
-        base_xp = GOAL_DIFFICULTY_XP.get(difficulty, 10)
+        goal_kind = (meta or {}).get("kind", "custom")  # "daily" or "custom"
+        base_xp = GOAL_XP.get(goal_kind, 20)
     elif source == XPSource.COMMIT:
         base_xp = 10 + 2 * meta.get("files_changed", 0) 
     else:

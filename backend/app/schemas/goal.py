@@ -1,22 +1,24 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
-from app.models.goal import GoalPeriod, GoalType
+from app.models.goal import GoalType
 
 
 class GoalCreate(BaseModel):
-    type: GoalType
-    period: GoalPeriod
-    target: int
-    difficulty: int = 1  # 1–5 stars
     label: str
+    target: int = 1  # 1 = checkbox, >1 = counter
 
-class GoalOut(GoalCreate):
+
+class GoalOut(BaseModel):
     id: int
     user_id: int
+    type: GoalType
+    target: int
     current: float
+    label: str
     active: bool
+    goal_date: date | None
     completed: bool
     completed_at: datetime | None
     created_at: datetime

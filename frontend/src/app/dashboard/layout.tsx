@@ -22,7 +22,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <input id="app-drawer" type="checkbox" className="drawer-toggle" />
 
       {/* Main content */}
-      <div className="drawer-content flex flex-col min-h-screen bg-base-100">
+      <div className="drawer-content flex flex-col min-h-screen bg-base-200">
         {/* Mobile-only top bar */}
         <div className="navbar lg:hidden bg-base-200 border-b border-base-300 px-2">
           <label htmlFor="app-drawer" className="btn btn-ghost btn-square btn-sm">
