@@ -89,7 +89,7 @@ async def award_xp(
             difficulty = (meta or {}).get("difficulty", 1)
             base_xp = GOAL_DIFFICULTY_XP.get(difficulty, 20)
     elif source == XPSource.COMMIT:
-        base_xp = 10 + 2 * meta.get("files_changed", 0) 
+        base_xp = 10 + 2 * (meta or {}).get("files_changed", 0)
     else:
         base_xp = XP_VALUES[source]
 

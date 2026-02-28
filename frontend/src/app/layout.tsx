@@ -10,7 +10,7 @@ const nunito = Nunito({ subsets: ["latin"], weight: ["400", "600", "700", "800",
 
 export const metadata: Metadata = {
   title: "Shepherd",
-  description: "Level up your coding. Earn XP from commits and LeetCode solves, track streaks, and hit goals.",
+  description: "Level up your coding. Earn XP from commits and Leetcode solves, track streaks, and hit goals.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

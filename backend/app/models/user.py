@@ -23,6 +23,7 @@ class User(Base):
     github_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     github_login: Mapped[str] = mapped_column(String(128), index=True)  # immutable GitHub handle, used for webhook resolution
     username: Mapped[str] = mapped_column(String(128))  # editable display name
+    leetcode_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     github_access_token: Mapped[str | None] = mapped_column(String(512), nullable=True)

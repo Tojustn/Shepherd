@@ -10,7 +10,7 @@ export interface StreakInfo {
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
   GitHub: <Github size={14} />,
-  LeetCode: <Code2 size={14} />,
+  Leetcode: <Code2 size={14} />,
 };
 
 function formatDate(iso: string | null): string {

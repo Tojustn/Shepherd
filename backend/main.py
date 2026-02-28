@@ -17,7 +17,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Shepherd API",
-    description="Developer command center — GitHub, LeetCode, job search in one place.",
+    description="Developer command center — GitHub, Leetcode, job search in one place.",
     version="0.1.0",
     lifespan=lifespan,
 )

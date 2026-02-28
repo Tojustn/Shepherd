@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/auth";
 import { useXPContext } from "@/context/xp";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { XPBar } from "@/components/XPBar";
 import { GoalPreviewCard } from "@/components/GoalPreviewCard";
 import { StreakCard, StreakInfo } from "@/components/StreakCard";
 import { Goal } from "@/components/CreateGoalForm";
 import { Zap, Target, Flame, ArrowRight, Code2 } from "lucide-react";
-import { XPCatchUpBanner } from "@/components/XPCatchUpBanner";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -19,6 +19,7 @@ interface RecentSolve {
   language: string | null;
   confidence: number | null;
   solved_at: string;
+  is_imported: boolean;
 }
 
 const DIFF_COLORS: Record<string, string> = {
@@ -68,27 +69,46 @@ function SectionHeader({ icon, color, label, right }: { icon: React.ReactNode; c
 export default function Dashboard() {
   const { token } = useAuth();
   const { subscribe, triggerLevelUp } = useXPContext();
-  const [user, setUser] = useState<User | null>(null);
-  const [recentSolves, setRecentSolves] = useState<RecentSolve[]>([]);
+  const queryClient = useQueryClient();
+  const levelUpFiredRef = useRef(false);
 
+  const { data: user } = useQuery<User>({
+    queryKey: ["me"],
+    queryFn: async () => {
+      const r = await fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    },
+    enabled: !!token,
+  });
+
+  const { data: allSolves = [] } = useQuery<RecentSolve[]>({
+    queryKey: ["leetcode", "solves"],
+    queryFn: async () => {
+      const r = await fetch(`${API_URL}/api/leetcode/solves`, { headers: { Authorization: `Bearer ${token}` } });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!token,
+  });
+
+  const recentSolves = allSolves.slice(0, 5);
+
+  // Fire level-up animation once when data first arrives
+  useEffect(() => {
+    if (user?.pending_level_up && !levelUpFiredRef.current) {
+      levelUpFiredRef.current = true;
+      triggerLevelUp(user.level);
+    }
+  }, [user?.pending_level_up, user?.level, triggerLevelUp]);
+
+  // Keep cached user XP/level in sync with SSE events
   useEffect(() => {
     return subscribe((event) => {
-      setUser((u) => u ? { ...u, xp: event.total_xp, level: event.new_level } : u);
+      queryClient.setQueryData<User>(["me"], (old) =>
+        old ? { ...old, xp: event.total_xp, level: event.new_level } : old
+      );
     });
-  }, [subscribe]);
-
-  useEffect(() => {
-    if (!token) return;
-    fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((data: User) => {
-        setUser(data);
-        if (data.pending_level_up) triggerLevelUp(data.level);
-      });
-    fetch(`${API_URL}/api/leetcode/solves`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.ok ? r.json() : [])
-      .then((data: RecentSolve[]) => setRecentSolves(data.slice(0, 5)));
-  }, [token, triggerLevelUp]);
+  }, [subscribe, queryClient]);
 
   if (!user) return <p className="p-8 text-base-content/40 font-mono">Loading...</p>;
 
@@ -97,8 +117,6 @@ export default function Dashboard() {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-10 flex flex-col gap-8">
-      <XPCatchUpBanner token={token} />
-
       {/* Profile card */}
       <div
         className="rounded-2xl bg-base-100 p-5 flex items-center gap-5 border-2 border-base-300"
@@ -195,17 +213,17 @@ export default function Dashboard() {
             label="Streaks"
           />
           <StreakCard label="GitHub" streak={user.github_streak} />
-          <StreakCard label="LeetCode" streak={user.leetcode_streak} />
+          <StreakCard label="Leetcode" streak={user.leetcode_streak} />
         </div>
 
       </div>
 
-      {/* Recent LeetCode */}
+      {/* Recent Leetcode */}
       <div className="flex flex-col gap-4">
         <SectionHeader
           icon={<Code2 size={16} />}
           color="#f59e0b"
-          label="Recent LeetCode"
+          label="Recent Leetcode"
           right={
             <Link
               href="/dashboard/leetcode"
@@ -252,8 +270,10 @@ export default function Dashboard() {
                     >
                       {diff}
                     </span>
+
+                   
                     <span className="text-xs font-bold text-base-content/30 font-mono">
-                      {timeAgo(solve.solved_at)}
+                      {solve.is_imported ? "imported" : timeAgo(solve.solved_at)}
                     </span>
                   </div>
                 </div>

@@ -27,6 +27,7 @@ class UserOut(BaseModel):
     daily_quests: list[GoalOut]
     pending_level_up: bool
     onboarding_complete: bool
+    leetcode_username: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -34,6 +35,7 @@ class UserOut(BaseModel):
 
 class ProfileUpdate(BaseModel):
     username: str | None = None
+    leetcode_username: str | None = None
 
 
 class TokenOut(BaseModel):

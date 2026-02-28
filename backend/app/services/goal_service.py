@@ -60,7 +60,7 @@ async def ensure_daily_goals(user: User, db: AsyncSession) -> list[Goal]:
             user_id=user.id,
             type=GoalType.DAILY_LEETCODE,
             target=1,
-            label="Solve a LeetCode problem",
+            label="Solve a Leetcode problem",
             goal_date=today,
         ))
 

@@ -1,0 +1,1 @@
+export type LCStatus = "idle" | "validating" | "valid" | "invalid" | "importing" | "done";

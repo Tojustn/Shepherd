@@ -21,7 +21,7 @@ function formatEventLabel(source: string, meta: Record<string, unknown> | null):
   }
   if (source === "leetcode_solve") {
     const diff = meta?.difficulty as string | undefined;
-    return diff ? `LeetCode ${diff.charAt(0).toUpperCase() + diff.slice(1)}` : "LeetCode solve";
+    return diff ? `Leetcode ${diff.charAt(0).toUpperCase() + diff.slice(1)}` : "Leetcode solve";
   }
   if (source === "goal_complete") {
     const kind = meta?.kind as string | undefined;
@@ -83,8 +83,8 @@ export function XPCatchUpBanner({ token }: Props) {
 
   return (
     <div
-      className="rounded-2xl bg-base-100 border-2 border-base-300 p-4 flex flex-col gap-3"
-      style={{ boxShadow: "0 5px 0 rgba(0,0,0,0.25)", borderColor: "color-mix(in srgb, var(--game-accent) 40%, var(--color-base-300))" }}
+      className="fixed bottom-6 right-6 z-50 w-full max-w-sm rounded-2xl bg-base-100 border-2 border-base-300 p-4 flex flex-col gap-3"
+      style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.18), 0 5px 0 rgba(0,0,0,0.12)", borderColor: "color-mix(in srgb, var(--game-accent) 40%, var(--color-base-300))" }}
     >
       {/* Header */}
       <div className="flex items-center justify-between">

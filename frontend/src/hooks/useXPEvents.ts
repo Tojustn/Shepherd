@@ -20,7 +20,7 @@ export function formatXPSource(source: string, meta?: Record<string, unknown> | 
   }
   if (source === "leetcode_solve") {
     const diff = meta?.difficulty as string | undefined;
-    return diff ? `LeetCode ${diff.charAt(0).toUpperCase() + diff.slice(1)}` : "LeetCode";
+    return diff ? `Leetcode ${diff.charAt(0).toUpperCase() + diff.slice(1)}` : "Leetcode";
   }
   if (source === "goal_complete") {
     const kind = meta?.kind as string | undefined;

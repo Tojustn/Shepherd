@@ -1,1 +1,25 @@
+# Claude
 .claude/
+
+# Backend
+backend/.env
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/.pytest_cache/
+
+# Frontend
+frontend/.env.local
+frontend/.env.production
+frontend/.next/
+frontend/node_modules/
+frontend/.vercel/
+
+# Editor
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

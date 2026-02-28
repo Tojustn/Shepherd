@@ -10,7 +10,7 @@ const NAV_ITEMS = [
   { label: "Dashboard", href: "/dashboard",          icon: LayoutDashboard },
   { label: "Repos",     href: "/dashboard/repos",    icon: GitBranch },
   { label: "Goals",     href: "/dashboard/goals",    icon: Target },
-  { label: "LeetCode",  href: "/dashboard/leetcode", icon: Code2 },
+  { label: "Leetcode",  href: "/dashboard/leetcode", icon: Code2 },
   { label: "Profile",   href: "/dashboard/profile",  icon: User },
 ];
 

@@ -23,7 +23,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def github_login():
     url = (
         "https://github.com/login/oauth/authorize"
-        f"?client_id={settings.GITHUB_CLIENT_ID}"
+        f"?client_id={settings.GITHUB_OAUTH_CLIENT_ID}"
         f"&redirect_uri={settings.GITHUB_REDIRECT_URI}"
         "&scope=read:user,user:email,repo"
     )
@@ -37,8 +37,8 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
         token_response = await client.post(
             "https://github.com/login/oauth/access_token",
             json={
-                "client_id": settings.GITHUB_CLIENT_ID,
-                "client_secret": settings.GITHUB_CLIENT_SECRET,
+                "client_id": settings.GITHUB_OAUTH_CLIENT_ID,
+                "client_secret": settings.GITHUB_OAUTH_CLIENT_SECRET,
                 "code": code,
             },
             headers={"Accept": "application/json"},
@@ -126,6 +126,7 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         "daily_quests": [GoalOut.model_validate(g) for g in daily_quests],
         "pending_level_up": user.pending_level_up,
         "onboarding_complete": user.onboarding_complete,
+        "leetcode_username": user.leetcode_username,
         "created_at": user.created_at,
     }
 
@@ -159,6 +160,9 @@ async def update_profile(
         if not stripped:
             raise HTTPException(status_code=422, detail="Username cannot be empty")
         user.username = stripped
+    if payload.leetcode_username is not None:
+        stripped_lc = payload.leetcode_username.strip()
+        user.leetcode_username = stripped_lc if stripped_lc else None
     await db.commit()
     await cache_delete(f"user:me:{user.id}")
 

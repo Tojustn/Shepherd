@@ -40,8 +40,13 @@ class LeetCodeSolveOut(BaseModel):
     confidence: int | None
     solved_at: datetime
     xp_awarded: int = 0
+    is_imported: bool
 
     model_config = {"from_attributes": True}
+
+class LCImportRequest(BaseModel):
+    session_cookie: str | None = None
+
 
 class LeetCodeSolveUpdate(BaseModel):
     notes: str | None = None

@@ -71,6 +71,7 @@ function ProgressBar({ pct }: { pct: number }) {
 export default function QuestBoardPage() {
   const { token, logout } = useAuth();
   const [repos, setRepos] = useState<Repo[]>([]);
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -78,10 +79,10 @@ export default function QuestBoardPage() {
     fetch(`${API_URL}/api/github/repos`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => {
         if (r.status === 401) { logout(); return; }
-        if (!r.ok) return;
-        return r.json().then(setRepos);
+        if (!r.ok) { setLoading(false); return; }
+        return r.json().then(data => { setRepos(data); setLoading(false); });
       })
-      .catch(() => {});
+      .catch(() => setLoading(false));
   }, [token, logout]);
 
   const filtered = repos.filter(r =>
@@ -106,10 +107,26 @@ export default function QuestBoardPage() {
       </div>
 
       {/* Cards */}
-      {filtered.length === 0 ? (
-        <p className="text-sm font-bold text-base-content/30 text-center mt-20">
-          {repos.length === 0 ? "Loading quests..." : "No quests found"}
-        </p>
+      {loading ? (
+        <p className="text-sm font-bold text-base-content/30 text-center mt-20">Loading quests...</p>
+      ) : repos.length === 0 ? (
+        <div className="flex flex-col items-center justify-center mt-20 gap-4 text-center">
+          <span className="text-5xl">📭</span>
+          <div>
+            <p className="font-black text-base-content text-lg">No repos found</p>
+            <p className="text-sm font-semibold text-base-content/40 mt-1">Push your first commit to GitHub and it'll show up here.</p>
+          </div>
+          <a
+            href="https://github.com/new"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-sm gap-2 font-black border-2 border-base-300 bg-transparent hover:bg-base-200"
+          >
+            Create a repo on GitHub
+          </a>
+        </div>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm font-bold text-base-content/30 text-center mt-20">No quests found</p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map(repo => {

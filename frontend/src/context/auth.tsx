@@ -45,6 +45,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Check expiry every 30s so mid-session expiry is caught
+  useEffect(() => {
+    if (!token) return;
+    const id = setInterval(() => {
+      if (isTokenExpired(token)) {
+        clearAuthCookie();
+        setToken(null);
+      }
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [token]);
+
   function refreshToken() {
     const stored = getTokenFromCookie();
     if (stored && !isTokenExpired(stored)) {

@@ -6,10 +6,11 @@ import { useAuth } from "@/context/auth";
 import { Loading } from "@/components/Loading";
 import { AppSidebar } from "@/components/AppSidebar";
 import { XPProvider } from "@/context/xp";
+import { XPCatchUpBanner } from "@/components/XPCatchUpBanner";
 import { Menu } from "lucide-react";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, token } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -37,6 +38,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </span>
           </div>
           {children}
+          <XPCatchUpBanner token={token} />
         </div>
 
         {/* Sidebar */}

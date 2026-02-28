@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth";
-import { GitBranch, Code2, Flame, Zap, Check, AlertTriangle } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { GitBranch, Code2, Zap, Check, AlertTriangle, Loader2 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const MAX_LEVEL = 50;
@@ -18,6 +19,7 @@ interface UserProfile {
   xp_next_level: number;
   github_streak: { current: number; longest: number };
   leetcode_streak: { current: number; longest: number };
+  leetcode_username: string | null;
   created_at: string;
 }
 
@@ -75,48 +77,87 @@ function StatCard({ icon, label, value, sub }: {
 export default function ProfilePage() {
   const { token, logout } = useAuth();
   const router = useRouter();
+  const queryClient = useQueryClient();
 
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [username, setUsername] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
+  const [username, setUsername]       = useState("");
+  const [saved, setSaved]             = useState(false);
+  const [lcUsername, setLcUsername]   = useState("");
+  const [lcSaved, setLcSaved]         = useState(false);
+  const [lcImported, setLcImported]   = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
-  const [showDelete, setShowDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [showDelete, setShowDelete]   = useState(false);
   const deleteInputRef = useRef<HTMLInputElement>(null);
 
+  const { data: profile } = useQuery<UserProfile>({
+    queryKey: ["me"],
+    queryFn: async () => {
+      const r = await fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    },
+    enabled: !!token,
+  });
+
+  // Seed input fields once when profile first loads
   useEffect(() => {
-    if (!token) return;
-    fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((data) => { setProfile(data); setUsername(data.username); });
-  }, [token]);
+    if (profile && !username) setUsername(profile.username);
+    if (profile && !lcUsername) setLcUsername(profile.leetcode_username ?? "");
+  }, [profile]);
 
-  async function saveUsername() {
-    if (!token || !username.trim() || username === profile?.username) return;
-    setSaving(true);
-    await fetch(`${API_URL}/api/auth/profile`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ username: username.trim() }),
-    });
-    setProfile((p) => p ? { ...p, username: username.trim() } : p);
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
-  }
+  const { mutate: saveUsername, isPending: saving } = useMutation({
+    mutationFn: () =>
+      fetch(`${API_URL}/api/auth/profile`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim() }),
+      }).then((r) => { if (!r.ok) throw new Error("Save failed"); return r.json(); }),
+    onSuccess: () => {
+      queryClient.setQueryData<UserProfile>(["me"], (old) => old ? { ...old, username: username.trim() } : old);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    },
+  });
 
-  async function deleteAccount() {
-    if (deleteConfirm !== "DELETE" || !token) return;
-    setDeleting(true);
-    await fetch(`${API_URL}/api/auth/account`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    logout();
-    router.replace("/");
-  }
+  const { mutate: saveLcUsername, isPending: lcSaving } = useMutation({
+    mutationFn: () =>
+      fetch(`${API_URL}/api/auth/profile`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ leetcode_username: lcUsername.trim() || null }),
+      }).then((r) => { if (!r.ok) throw new Error("Save failed"); return r.json(); }),
+    onSuccess: () => {
+      queryClient.setQueryData<UserProfile>(["me"], (old) =>
+        old ? { ...old, leetcode_username: lcUsername.trim() || null } : old
+      );
+      setLcImported(null);
+      setLcSaved(true);
+      setTimeout(() => setLcSaved(false), 2500);
+    },
+  });
+
+  const { mutate: importLcSolves, isPending: lcImporting } = useMutation({
+    mutationFn: () =>
+      fetch(`${API_URL}/api/leetcode/import`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((r) => { if (!r.ok) throw new Error("Import failed"); return r.json(); }),
+    onSuccess: (data) => {
+      setLcImported(data.imported ?? 0);
+      queryClient.invalidateQueries({ queryKey: ["leetcode"] });
+    },
+  });
+
+  const { mutate: deleteAccount, isPending: deleting } = useMutation({
+    mutationFn: () =>
+      fetch(`${API_URL}/api/auth/account`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((r) => { if (!r.ok && r.status !== 204) throw new Error("Delete failed"); }),
+    onSuccess: () => {
+      logout();
+      router.replace("/");
+    },
+  });
 
   function memberSince(dateStr: string) {
     return new Date(dateStr).toLocaleDateString("en-US", { month: "long", year: "numeric" });
@@ -241,6 +282,52 @@ export default function ProfilePage() {
               This is your display name inside Shepherd. Your GitHub handle stays unchanged.
             </p>
           </div>
+
+          {/* Leetcode username */}
+          <div className="flex flex-col gap-1.5 border-t border-base-300 pt-4">
+            <label className="text-xs font-black uppercase tracking-wider text-base-content/40">Leetcode username</label>
+            <div className="flex gap-2">
+              <input
+                value={lcUsername}
+                onChange={(e) => { setLcUsername(e.target.value); setLcImported(null); }}
+                onKeyDown={(e) => e.key === "Enter" && saveLcUsername()}
+                className="input input-bordered flex-1 font-bold text-sm font-mono"
+                placeholder="your-lc-handle"
+                maxLength={64}
+              />
+              <button
+                onClick={saveLcUsername}
+                disabled={lcSaving || lcUsername === (profile.leetcode_username ?? "")}
+                className="btn btn-sm gap-1.5 font-black text-white border-none min-w-[80px]"
+                style={{
+                  backgroundColor: lcSaved ? "#22c55e" : "var(--game-accent)",
+                  boxShadow: "0 3px 0 color-mix(in srgb, var(--game-accent) 50%, #000)",
+                }}
+              >
+                {lcSaved ? <><Check size={14} strokeWidth={3} /> Saved</> : lcSaving ? "..." : "Save"}
+              </button>
+            </div>
+            {profile.leetcode_username && (
+              <div className="flex items-center gap-3 mt-1">
+                <button
+                  onClick={importLcSolves}
+                  disabled={lcImporting}
+                  className="flex items-center gap-1.5 text-xs font-black transition-colors"
+                  style={{ color: "var(--game-accent)" }}
+                >
+                  {lcImporting
+                    ? <><Loader2 size={11} className="animate-spin" /> Importing…</>
+                    : <><Code2 size={11} /> Re-sync solves from Leetcode</>
+                  }
+                </button>
+                {lcImported !== null && !lcImporting && (
+                  <span className="text-xs font-bold text-base-content/40">
+                    {lcImported === 0 ? "Already up to date" : `Imported ${lcImported} new solve${lcImported === 1 ? "" : "s"}`}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -278,7 +365,7 @@ export default function ProfilePage() {
                   ref={deleteInputRef}
                   value={deleteConfirm}
                   onChange={(e) => setDeleteConfirm(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && deleteAccount()}
+                  onKeyDown={(e) => e.key === "Enter" && deleteConfirm === "DELETE" && deleteAccount()}
                   placeholder="DELETE"
                   className="input input-bordered input-error input-sm flex-1 font-mono font-bold"
                 />

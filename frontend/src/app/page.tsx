@@ -68,7 +68,7 @@ function ReposVisual({ color }: { color: string }) {
 function StreaksVisual({ color }: { color: string }) {
   return (
     <div className="flex flex-col gap-2 w-full">
-      {[{ platform: "GitHub", streak: 7, best: 14, icon: "🐙" }, { platform: "LeetCode", streak: 3, best: 5, icon: "💻" }].map((s, i) => (
+      {[{ platform: "GitHub", streak: 7, best: 14, icon: "🐙" }, { platform: "Leetcode", streak: 3, best: 5, icon: "💻" }].map((s, i) => (
         <div key={i} className="rounded-xl p-3 border border-base-300" style={{ backgroundColor: `${color}10` }}>
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-xs font-black text-base-content/60 uppercase tracking-wide">{s.icon} {s.platform}</span>
@@ -88,7 +88,7 @@ function StreaksVisual({ color }: { color: string }) {
 function GoalsVisual({ color }: { color: string }) {
   return (
     <div className="flex flex-col gap-1.5 w-full">
-      {[{ label: "Push a commit", done: true }, { label: "Solve a LeetCode problem", done: true }, { label: "Reach Level 5", done: false, progress: 88 }].map((q, i) => (
+      {[{ label: "Push a commit", done: true }, { label: "Solve a Leetcode problem", done: true }, { label: "Reach Level 5", done: false, progress: 88 }].map((q, i) => (
         <div key={i} className="rounded-xl px-3 py-2 border border-base-300 flex items-center gap-2" style={{ backgroundColor: `${color}08` }}>
           <CheckCircle2 size={13} style={{ color: q.done ? color : "rgba(0,0,0,0.15)" }} className="shrink-0" />
           <div className="flex-1 min-w-0">
@@ -146,7 +146,7 @@ function FeatureVisual({ visual, color }: { visual: NodeDef["visual"]; color: st
 const MAIN_X = 100;
 const BRANCH_X = 230;
 const ROW_H = 380;
-const TOP_PAD = 40;
+const TOP_PAD = 160;
 
 interface NodeDef {
   id: string;
@@ -165,9 +165,9 @@ interface NodeDef {
 const NODES: NodeDef[] = [
   { id: "dashboard", type: "main",   title: "Dashboard", tagline: "Your command center.",       desc: "XP, level, streaks, and daily quests — all at a glance.",                        color: "#3b82f6", features: ["XP & level progression", "Daily quest board", "At-a-glance stats"],        visual: "dashboard", cardSide: "right", icon: LayoutDashboard, href: "/dashboard" },
   { id: "repos",     type: "fork",   title: "Repos",     tagline: "Every repo, gamified.",      desc: "Your repos ranked by activity. Click into any one for an interactive commit graph with branches, XP, and file diffs.", color: "#6366f1", features: ["Active / Stale / Abandoned status", "Interactive commit graph", "Activity decay tracking"],  visual: "repos",     cardSide: "left",  icon: GitBranch,       href: "/dashboard/repos" },
-  { id: "streaks",   type: "branch", title: "Streaks",   tagline: "Consistency is the grind.",  desc: "GitHub and LeetCode streaks unified — one place to track your fire.",             color: "#f97316", features: ["Cross-platform streaks", "Current & best streak tracking", "Last activity status"],  visual: "streaks",   cardSide: "right", icon: Flame,           href: "/dashboard" },
+  { id: "streaks",   type: "branch", title: "Streaks",   tagline: "Consistency is the grind.",  desc: "GitHub and Leetcode streaks unified — one place to track your fire.",             color: "#f97316", features: ["Cross-platform streaks", "Current & best streak tracking", "Last activity status"],  visual: "streaks",   cardSide: "right", icon: Flame,           href: "/dashboard" },
   { id: "goals",     type: "merge",  title: "Goals",     tagline: "Ship. Complete. Level up.",  desc: "Daily quests auto-complete when you ship. Set custom goals on top.",              color: "#22c55e", features: ["Auto-tracked daily quests", "Custom goal builder", "Real-time updates"], visual: "goals",     cardSide: "left",  icon: Target,          href: "/dashboard/goals" },
-  { id: "leetcode",  type: "main",   title: "LeetCode",  tagline: "Your problem journal.",      desc: "Track solves, confidence, topics, and notes — all in one place. Built for grinders.", color: "#f59e0b", features: ["Confidence star ratings", "Topic + difficulty filters", "Code & notes editor"], visual: "leetcode", cardSide: "right", icon: Code2, href: "/dashboard/leetcode" },
+  { id: "leetcode",  type: "main",   title: "Leetcode",  tagline: "Your problem journal.",      desc: "Track solves, confidence, topics, and notes — all in one place. Built for grinders.", color: "#f59e0b", features: ["Confidence star ratings", "Topic + difficulty filters", "Code & notes editor"], visual: "leetcode", cardSide: "right", icon: Code2, href: "/dashboard/leetcode" },
 ];
 
 // ─── SVG Spine ────────────────────────────────────────────────────────────────
@@ -305,11 +305,11 @@ export default function Home() {
 
         {/* Branch graph — desktop */}
         <section id="features" className="w-full max-w-3xl px-4 pb-32">
-          <h2 className="relative z-10 text-2xl font-black text-base-content mb-2 text-center">Explore the app</h2>
-          <p className="relative z-10 text-center text-sm text-base-content/40 font-semibold mb-8">Scroll to explore each feature</p>
+          <h2 className="text-2xl font-black text-base-content mb-2 text-center">Explore the app</h2>
+          <p className="text-center text-sm text-base-content/40 font-semibold mb-24">Scroll to explore each feature</p>
 
           {/* Desktop */}
-          <div className="hidden md:block relative" style={{ height: totalHeight, zIndex: 0, isolation: "isolate" }}>
+          <div className="hidden md:block relative" style={{ height: totalHeight, isolation: "isolate" }}>
             <BranchSpine activeIdx={activeIdx} totalHeight={totalHeight} />
 
             {NODES.map((node, i) => {
@@ -429,6 +429,8 @@ export default function Home() {
         </section>
 
       </main>
+
+
     </div>
   );
 }

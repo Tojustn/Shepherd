@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -7,14 +7,55 @@ from app.core.security import get_current_user
 from app.core.database import get_db
 from app.models.leetcode import LeetCodeSolve, LeetCodeProblem
 from app.models.user import User
-from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveOut
+from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveOut, LCImportRequest
 from app.services.cache import cache_delete
-from app.services.sse_service import  connect, disconnect, push
+from app.services.sse_service import connect, disconnect, push
 from app.schemas.leetcode import LeetCodeSolveUpdate
-from app.services.leetcode_service import update_solve, delete_solve, get_stats, log_solve, get_solve, search_problems
+from app.services.leetcode_service import update_solve, delete_solve, get_stats, log_solve, get_solve, search_problems, import_historical_solves, validate_leetcode_username
 from app.schemas.leetcode import LeetCodeStatsOut
 
 router = APIRouter(prefix="/leetcode", tags=["leetcode"])
+
+
+@router.get("/validate-username")
+async def validate_lc_username(
+    username: str = Query(..., min_length=1),
+    _user: User = Depends(get_current_user),
+):
+    """Check if a LeetCode username exists (public profile)."""
+    exists = await validate_leetcode_username(username)
+    return {"valid": exists}
+
+
+@router.post("/import")
+async def import_lc_solves(
+    payload: LCImportRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Import historical LeetCode solves.
+    Provide session_cookie (LEETCODE_SESSION) for full history
+    """
+    if not user.leetcode_username:
+        raise HTTPException(status_code=400, detail="No LeetCode username set. Update your profile first.")
+    try:
+        await db.execute(
+            delete(LeetCodeSolve).where(
+                LeetCodeSolve.user_id == user.id,
+                LeetCodeSolve.is_imported == True,
+            )
+        )
+        count = await import_historical_solves(
+            user.leetcode_username, db, user, session_cookie=payload.session_cookie
+        )
+        await db.commit()
+        return {"imported": count}
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=502, detail=f"LeetCode import failed: {e}")
 
 
 @router.get("/search")

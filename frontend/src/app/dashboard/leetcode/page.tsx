@@ -20,6 +20,7 @@ import {
   useReactTable,
   getCoreRowModel,
   getSortedRowModel,
+  getPaginationRowModel,
   createColumnHelper,
   type SortingState,
 } from "@tanstack/react-table";
@@ -61,6 +62,7 @@ interface Solve {
   confidence: number | null;
   solved_at: string;
   xp_awarded: number;
+  is_imported: boolean;
 }
 
 interface SolveGroup {
@@ -70,7 +72,7 @@ interface SolveGroup {
 
 // ── Query Builder Types ────────────────────────────────────────────────────
 
-type Field    = "difficulty" | "language" | "confidence" | "topic" | "solveCount";
+type Field    = "difficulty" | "language" | "confidence" | "topic" | "solveCount" | "imported";
 type Operator = "is" | "is_not" | "gte" | "lte" | "includes" | "excludes";
 
 interface FilterRule {
@@ -141,6 +143,7 @@ const FIELD_LABELS: Record<Field, string> = {
   confidence: "Confidence",
   topic:      "Topic",
   solveCount: "Solve Count",
+  imported:   "Imported",
 };
 
 const FIELD_OPERATORS: Record<Field, { op: Operator; label: string }[]> = {
@@ -167,6 +170,10 @@ const FIELD_OPERATORS: Record<Field, { op: Operator; label: string }[]> = {
     { op: "gte", label: ">=" },
     { op: "lte", label: "<=" },
   ],
+  imported: [
+    { op: "is",     label: "is"     },
+    { op: "is_not", label: "is not" },
+  ],
 };
 
 function defaultOperator(field: Field): Operator {
@@ -180,6 +187,7 @@ function defaultValue(field: Field, availableLanguages: string[], availableTopic
     case "confidence": return 3;
     case "topic":      return availableTopics[0] ?? "";
     case "solveCount": return 1;
+    case "imported":   return "true";
   }
 }
 
@@ -269,6 +277,37 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(days / 365)}y ago`;
 }
 
+function ConfidencePicker({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const selected = value != null ? CONFIDENCE_LABELS[value] : null;
+  return (
+    <div className="flex items-center gap-2">
+      {([1, 2, 3, 4, 5] as const).map(n => {
+        const cl = CONFIDENCE_LABELS[n];
+        const active = value === n;
+        return (
+          <button
+            key={n}
+            type="button"
+            onClick={() => onChange(active ? null : n)}
+            title={cl.label}
+            className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-black transition-all shrink-0"
+            style={{
+              backgroundColor: active ? cl.color : "color-mix(in srgb, var(--color-base-content) 8%, transparent)",
+              color: active ? "#fff" : "color-mix(in srgb, var(--color-base-content) 40%, transparent)",
+              border: active ? "none" : "1px solid color-mix(in srgb, var(--color-base-content) 12%, transparent)",
+            }}
+          >
+            {n}
+          </button>
+        );
+      })}
+      {selected && (
+        <span className="text-xs font-black ml-1" style={{ color: selected.color }}>{selected.label}</span>
+      )}
+    </div>
+  );
+}
+
 function DiffBadge({ difficulty }: { difficulty: string }) {
   const c = DIFF_COLORS[difficulty.toLowerCase()] ?? DIFF_COLORS.medium;
   return (
@@ -319,6 +358,11 @@ function evaluateRule(rule: FilterRule, g: SolveGroup): boolean {
       if (rule.operator === "gte") return a >= v;
       if (rule.operator === "lte") return a <= v;
       return true;
+    }
+    case "imported": {
+      const allImported = g.solves.every(s => s.is_imported);
+      const want = rule.value === "true";
+      return rule.operator === "is" ? allImported === want : allImported !== want;
     }
   }
 }
@@ -427,6 +471,17 @@ function FilterRuleRow({ rule, onChange, onRemove, availableLanguages, available
             onChange={e => onChange({ ...rule, value: Math.max(1, Number(e.target.value)) })}
             className="input input-bordered input-xs w-20"
           />
+        );
+      case "imported":
+        return (
+          <select
+            value={String(rule.value)}
+            onChange={e => onChange({ ...rule, value: e.target.value })}
+            className="select select-bordered select-xs"
+          >
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
         );
     }
   }
@@ -670,6 +725,7 @@ function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => vo
         confidence,
         solved_at:   new Date().toISOString(),
         xp_awarded:  0,
+        is_imported: false,
       };
       queryClient.setQueryData<Solve[]>(["leetcode", "solves"], old => [optimistic, ...(old ?? [])]);
       return { previous };
@@ -766,25 +822,9 @@ function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => vo
             </div>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-black text-base-content/40">Confidence <span className="font-normal opacity-60">(optional)</span></label>
-            <div className="flex gap-2">
-              {([1, 2, 3, 4, 5] as const).map(n => {
-                const cl = CONFIDENCE_LABELS[n];
-                const active = confidence === n;
-                return (
-                  <button key={n} type="button" onClick={() => setConfidence(active ? null : n)}
-                    className="flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl transition-all text-[10px] font-black"
-                    style={{
-                      backgroundColor: active ? cl.color : "color-mix(in srgb, var(--color-base-content) 8%, transparent)",
-                      color: active ? "#fff" : "color-mix(in srgb, var(--color-base-content) 45%, transparent)",
-                    }}>
-                    <span className="text-sm font-black">{n}</span>
-                    <span className="uppercase tracking-wider leading-tight text-center">{cl.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="flex items-center gap-3">
+            <label className="text-xs font-black text-base-content/40 shrink-0">Confidence <span className="font-normal opacity-60">(optional)</span></label>
+            <ConfidencePicker value={confidence} onChange={setConfidence} />
           </div>
 
           <div className="flex flex-col gap-1">
@@ -932,7 +972,9 @@ function SolveAttempt({
           className="flex items-center gap-3 flex-1 min-w-0 text-left"
         >
           <span className="text-[11px] font-black shrink-0" style={{ color: labelColor }}>{label}</span>
-          <span className="text-[11px] font-semibold text-base-content/35 shrink-0">{timeAgo(solve.solved_at)}</span>
+          {!solve.is_imported && (
+            <span className="text-[11px] font-semibold text-base-content/35 shrink-0">{timeAgo(solve.solved_at)}</span>
+          )}
           {solve.language && (
             <span className="hidden sm:block text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0"
               style={{ color: langColor(solve.language), backgroundColor: `${langColor(solve.language)}20`, border: `1px solid ${langColor(solve.language)}44` }}>
@@ -947,6 +989,11 @@ function SolveAttempt({
           )}
           {solve.time_complexity && <span className="font-mono text-[10px] text-base-content/35 hidden md:block">{solve.time_complexity}</span>}
           {solve.space_complexity && <span className="font-mono text-[10px] text-base-content/35 hidden md:block">{solve.space_complexity}</span>}
+          {solve.is_imported && !solve.code && (
+            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-base-300 text-base-content/35 shrink-0">
+              no code
+            </span>
+          )}
         </button>
 
         <button onClick={editing ? () => setEditing(false) : openEdit}
@@ -1001,24 +1048,9 @@ function SolveAttempt({
             </div>
           </div>
 
-          <div className="flex flex-col gap-3">
-            <label className="text-xs font-black text-base-content/40 uppercase tracking-wider">Confidence</label>
-            <div className="flex gap-2">
-              {([1, 2, 3, 4, 5] as const).map(n => {
-                const cl = CONFIDENCE_LABELS[n]; const active = eConf === n;
-                return (
-                  <button key={n} type="button" onClick={() => setEConf(active ? null : n)}
-                    className="flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl transition-all text-[10px] font-black"
-                    style={{
-                      backgroundColor: active ? cl.color : "color-mix(in srgb, var(--color-base-content) 8%, transparent)",
-                      color: active ? "#fff" : "color-mix(in srgb, var(--color-base-content) 45%, transparent)",
-                    }}>
-                    <span className="text-sm font-black">{n}</span>
-                    <span className="uppercase tracking-wider leading-tight text-center">{cl.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="flex items-center gap-3">
+            <label className="text-xs font-black text-base-content/40 uppercase tracking-wider shrink-0">Confidence</label>
+            <ConfidencePicker value={eConf} onChange={setEConf} />
           </div>
 
           <div className="flex flex-col gap-2">
@@ -1170,24 +1202,9 @@ function QuickSolveForm({ problem, token, onSuccess, onCancel }: {
         </div>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <label className="text-xs font-black text-base-content/40">Confidence <span className="font-normal opacity-60">(optional)</span></label>
-        <div className="flex gap-2">
-          {([1, 2, 3, 4, 5] as const).map(n => {
-            const cl = CONFIDENCE_LABELS[n]; const active = confidence === n;
-            return (
-              <button key={n} type="button" onClick={() => setConfidence(active ? null : n)}
-                className="flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-xl transition-all text-[10px] font-black"
-                style={{
-                  backgroundColor: active ? cl.color : "color-mix(in srgb, var(--color-base-content) 8%, transparent)",
-                  color: active ? "#fff" : "color-mix(in srgb, var(--color-base-content) 45%, transparent)",
-                }}>
-                <span className="text-sm font-black">{n}</span>
-                <span className="uppercase tracking-wider leading-tight text-center">{cl.label}</span>
-              </button>
-            );
-          })}
-        </div>
+      <div className="flex items-center gap-3">
+        <label className="text-xs font-black text-base-content/40 shrink-0">Confidence <span className="font-normal opacity-60">(optional)</span></label>
+        <ConfidencePicker value={confidence} onChange={setConfidence} />
       </div>
 
       <div className="flex flex-col gap-1">
@@ -1232,10 +1249,13 @@ function SolveGroupCard({
   const confSolve       = [...group.solves].reverse().find(s => s.confidence != null);
   const latestConf      = confSolve?.confidence != null ? CONFIDENCE_LABELS[confSolve.confidence] : null;
   const usedLangs       = [...new Set(group.solves.map(s => s.language).filter(Boolean) as string[])];
+  const isImported      = group.solves.every(s => s.is_imported);
 
   return (
-    <div className="rounded-2xl bg-base-100 border-2 border-base-300 overflow-hidden"
-      style={{ boxShadow: "0 4px 0 rgba(0,0,0,0.08)" }}>
+    <div
+      className="rounded-2xl bg-base-100 border-2 border-base-300 overflow-hidden"
+      style={{ boxShadow: "0 4px 0 rgba(0,0,0,0.08)" }}
+    >
       <div className="flex items-center gap-3 px-4 py-3.5">
         <button onClick={() => setExpanded(v => !v)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
           <span className="font-mono text-xs text-base-content/30 shrink-0 w-10">{group.problem.leetcode_id}.</span>
@@ -1243,6 +1263,12 @@ function SolveGroupCard({
         </button>
 
         <DiffBadge difficulty={group.problem.difficulty} />
+
+        {isImported && (
+          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-base-300 text-base-content/40 shrink-0">
+            imported
+          </span>
+        )}
 
         {usedLangs.length > 0 && (
           <div className="hidden sm:flex items-center gap-1 shrink-0">
@@ -1262,7 +1288,9 @@ function SolveGroupCard({
           </span>
         )}
 
-        <span className="font-black text-xs shrink-0" style={{ color: "var(--game-accent)" }}>+{xp} XP</span>
+        {!isImported && (
+          <span className="font-black text-xs shrink-0" style={{ color: "var(--game-accent)" }}>+{xp} XP</span>
+        )}
 
         {solveCount > 1 && (
           <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-base-300 text-base-content/50 shrink-0">
@@ -1319,11 +1347,13 @@ export default function LeetCodePage() {
   const queryClient = useQueryClient();
   const modalRef    = useRef<HTMLDialogElement>(null);
 
-  // Filter / sort state
+  // Filter / sort / pagination state
   const [globalFilter, setGlobalFilter] = useState("");
   const [queryGroup,   setQueryGroup]   = useState<FilterGroup>({ id: "root", combinator: "and", rules: [] });
   const [showFilters,  setShowFilters]  = useState(false);
   const [sorting,      setSorting]      = useState<SortingState>([{ id: "lastSolved", desc: true }]);
+  const [pageSize,     setPageSize]     = useState(25);
+  const [pageIndex,    setPageIndex]    = useState(0);
 
   const { data: solves = [], isLoading } = useQuery<Solve[]>({
     queryKey: ["leetcode", "solves"],
@@ -1388,10 +1418,17 @@ export default function LeetCodePage() {
   const table = useReactTable({
     data: filteredGroups,
     columns: COLUMNS,
-    state: { sorting },
-    onSortingChange: setSorting,
+    state: { sorting, pagination: { pageIndex, pageSize } },
+    onSortingChange: (u) => { setSorting(u); setPageIndex(0); },
+    onPaginationChange: (u) => {
+      const next = typeof u === "function" ? u({ pageIndex, pageSize }) : u;
+      setPageIndex(next.pageIndex);
+      setPageSize(next.pageSize);
+    },
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    manualPagination: false,
   });
 
   function handleSuccess() {
@@ -1401,7 +1438,8 @@ export default function LeetCodePage() {
 
   const activeRuleCount = useMemo(() => countRules(queryGroup), [queryGroup]);
   const filtersActive   = globalFilter !== "" || queryGroup.rules.length > 0;
-  const visibleCount    = table.getRowModel().rows.length;
+  const visibleCount    = filteredGroups.length;
+  const pageCount       = table.getPageCount();
 
   const total  = stats?.total ?? 0;
   const easy   = stats?.difficulty_breakdown?.easy   ?? 0;
@@ -1414,6 +1452,7 @@ export default function LeetCodePage() {
   function clearFilters() {
     setGlobalFilter("");
     setQueryGroup({ id: "root", combinator: "and", rules: [] });
+    setPageIndex(0);
   }
 
   return (
@@ -1425,7 +1464,7 @@ export default function LeetCodePage() {
           <div className="rounded-lg p-1.5" style={{ backgroundColor: "color-mix(in srgb, var(--game-accent) 20%, transparent)" }}>
             <Code2 size={16} style={{ color: "var(--game-accent)" }} />
           </div>
-          <h2 className="text-xl font-black text-base-content">LeetCode</h2>
+          <h2 className="text-xl font-black text-base-content">Leetcode</h2>
         </div>
         <button onClick={() => modalRef.current?.showModal()}
           className="btn btn-sm gap-2 font-black text-white border-none"
@@ -1483,7 +1522,7 @@ export default function LeetCodePage() {
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/30 pointer-events-none" />
               <input
                 value={globalFilter}
-                onChange={e => setGlobalFilter(e.target.value)}
+                onChange={e => { setGlobalFilter(e.target.value); setPageIndex(0); }}
                 placeholder="Search title or #…"
                 className="input input-bordered input-sm w-full pl-9"
               />
@@ -1525,6 +1564,18 @@ export default function LeetCodePage() {
             >
               {currentSortDesc ? <ArrowDown size={14} /> : <ArrowUp size={14} />}
             </button>
+
+            {/* Per-page chooser */}
+            <div className="h-5 w-px bg-base-300 hidden sm:block" />
+            <select
+              value={pageSize}
+              onChange={e => { setPageSize(Number(e.target.value)); setPageIndex(0); }}
+              className="select select-bordered select-sm"
+            >
+              {[10, 25, 50, 100].map(n => (
+                <option key={n} value={n}>{n} / page</option>
+              ))}
+            </select>
 
             {/* Result count + clear */}
             {filtersActive && (
@@ -1583,6 +1634,54 @@ export default function LeetCodePage() {
           ))
         )}
       </section>
+
+      {/* Pagination controls */}
+      {pageCount > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <button
+            onClick={() => setPageIndex(0)}
+            disabled={pageIndex === 0}
+            className="btn btn-xs btn-ghost font-black disabled:opacity-30"
+          >«</button>
+          <button
+            onClick={() => setPageIndex(i => i - 1)}
+            disabled={pageIndex === 0}
+            className="btn btn-xs btn-ghost font-black disabled:opacity-30"
+          >‹</button>
+
+          {Array.from({ length: pageCount }, (_, i) => i)
+            .filter(i => Math.abs(i - pageIndex) <= 2 || i === 0 || i === pageCount - 1)
+            .reduce<(number | "…")[]>((acc, i, idx, arr) => {
+              if (idx > 0 && i - (arr[idx - 1] as number) > 1) acc.push("…");
+              acc.push(i);
+              return acc;
+            }, [])
+            .map((item, i) =>
+              item === "…" ? (
+                <span key={`ellipsis-${i}`} className="text-xs text-base-content/30 px-1">…</span>
+              ) : (
+                <button
+                  key={item}
+                  onClick={() => setPageIndex(item as number)}
+                  className={`btn btn-xs font-black ${pageIndex === item ? "btn-primary" : "btn-ghost"}`}
+                >
+                  {(item as number) + 1}
+                </button>
+              )
+            )}
+
+          <button
+            onClick={() => setPageIndex(i => i + 1)}
+            disabled={pageIndex >= pageCount - 1}
+            className="btn btn-xs btn-ghost font-black disabled:opacity-30"
+          >›</button>
+          <button
+            onClick={() => setPageIndex(pageCount - 1)}
+            disabled={pageIndex >= pageCount - 1}
+            className="btn btn-xs btn-ghost font-black disabled:opacity-30"
+          >»</button>
+        </div>
+      )}
 
     </div>
   );
