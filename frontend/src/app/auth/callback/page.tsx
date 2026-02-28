@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth";
 import { Loading } from "@/components/Loading";
 
@@ -9,16 +9,18 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function AuthCallbackInner() {
   const router = useRouter();
-  const params = useSearchParams();
   const { refreshToken } = useAuth();
 
   useEffect(() => {
-    const token = params.get("token");
-    if (!token) { router.replace("/"); return; }
-
-    const secure = location.protocol === "https:" ? "; Secure" : "";
-    document.cookie = `auth_token=${token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax${secure}`;
+    // Token is now set as a cookie by the backend redirect — no URL exposure.
     refreshToken();
+
+    const token = document.cookie
+      .split("; ")
+      .find((row) => row.startsWith("auth_token="))
+      ?.split("=")[1];
+
+    if (!token) { router.replace("/"); return; }
 
     fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())

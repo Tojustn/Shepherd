@@ -46,7 +46,8 @@ export function XPProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token) return;
 
-    const es = new EventSource(`${API_URL}/api/events/stream?token=${token}`);
+    // EventSource sends cookies automatically — no token in URL
+    const es = new EventSource(`${API_URL}/api/events/stream`, { withCredentials: true });
 
     es.addEventListener("xp_gained", (e: MessageEvent) => {
       const event = JSON.parse(e.data) as XPEvent;
