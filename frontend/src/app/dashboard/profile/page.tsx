@@ -267,7 +267,7 @@ export default function ProfilePage() {
                 maxLength={64}
               />
               <button
-                onClick={saveUsername}
+                onClick={() => saveUsername()}
                 disabled={saving || username === profile.username || !username.trim()}
                 className="btn btn-sm gap-1.5 font-black text-white border-none min-w-[80px]"
                 style={{
