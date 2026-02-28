@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+.env.production
 *.egg-info/
 dist/
 .pytest_cache/
