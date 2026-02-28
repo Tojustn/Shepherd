@@ -59,7 +59,7 @@ async def get_repo_commits(repo_name: str, user: User = Depends(get_current_user
         return cached
 
     try:
-        raw = await fetch_commits(user.github_access_token, user.username, repo_name)
+        raw = await fetch_commits(user.github_access_token, user.github_login, repo_name)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
             raise HTTPException(status_code=401, detail="GitHub token expired — please log in again")
@@ -92,7 +92,7 @@ async def get_repo_branches(repo_name: str, user: User = Depends(get_current_use
         return cached
 
     try:
-        branches = await fetch_branches(user.github_access_token, user.username, repo_name)
+        branches = await fetch_branches(user.github_access_token, user.github_login, repo_name)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
             raise HTTPException(status_code=401, detail="GitHub token expired — please log in again")
@@ -107,13 +107,13 @@ async def get_commit_detail(repo_name: str, sha: str, user: User = Depends(get_c
     if not user.github_access_token:
         raise HTTPException(status_code=400, detail="No GitHub token on file")
 
-    cache_key = f"github:repo:{user.username}/{repo_name}:commit:{sha}:{user.id}"
+    cache_key = f"github:repo:{user.github_login}/{repo_name}:commit:{sha}:{user.id}"
     cached = await cache_get(cache_key)
     if cached:
         return cached
 
     try:
-        raw = await fetch_commit_detail(user.github_access_token, user.username, repo_name, sha)
+        raw = await fetch_commit_detail(user.github_access_token, user.github_login, repo_name, sha)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
             raise HTTPException(status_code=401, detail="GitHub token expired — please log in again")
@@ -153,7 +153,7 @@ async def get_activity(user: User = Depends(get_current_user)):
         return cached
 
     try:
-        events = await fetch_events(user.username, user.github_access_token)
+        events = await fetch_events(user.github_login, user.github_access_token)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
             raise HTTPException(status_code=401, detail="GitHub token expired — please log in again")

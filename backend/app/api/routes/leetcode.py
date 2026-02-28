@@ -53,9 +53,9 @@ async def import_lc_solves(
         return {"imported": count}
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
-    except Exception as e:
+    except Exception:
         await db.rollback()
-        raise HTTPException(status_code=502, detail=f"LeetCode import failed: {e}")
+        raise HTTPException(status_code=502, detail="LeetCode import failed. Please try again.")
 
 
 @router.get("/search")

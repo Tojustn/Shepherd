@@ -10,6 +10,8 @@ from app.core.redis import close_redis, init_redis
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not settings.is_dev and settings.SECRET_KEY == "change-me":
+        raise RuntimeError("SECRET_KEY must be set to a secure value in production")
     await init_redis()
     yield
     await close_redis()
@@ -26,8 +28,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(api_router)

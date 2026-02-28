@@ -1,5 +1,8 @@
+import re
+import secrets
+
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,21 +21,40 @@ from app.services.goal_service import ensure_daily_goals
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+_USERNAME_RE = re.compile(r"^[\w\-\.]{1,32}$")
+_COOKIE_MAX_AGE = settings.JWT_EXPIRE_MINUTES * 60
+_COOKIE_SECURE = not settings.is_dev
+
 
 @router.get("/github/login")
 async def github_login():
+    state = secrets.token_urlsafe(32)
+    await cache_set(f"oauth_state:{state}", "1", ttl=300)
     url = (
         "https://github.com/login/oauth/authorize"
         f"?client_id={settings.GITHUB_OAUTH_CLIENT_ID}"
         f"&redirect_uri={settings.GITHUB_REDIRECT_URI}"
+        f"&state={state}"
         "&scope=read:user,user:email,repo"
     )
     return RedirectResponse(url)
 
 
 @router.get("/github/callback")
-async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
-    async with httpx.AsyncClient() as client:
+async def github_callback(
+    code: str,
+    db: AsyncSession = Depends(get_db),
+    state: str | None = None,
+):
+    # Validate OAuth state to prevent CSRF
+    if not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth state")
+    stored = await cache_get(f"oauth_state:{state}")
+    if not stored:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    await cache_delete(f"oauth_state:{state}")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
         # Exchange code for access token
         token_response = await client.post(
             "https://github.com/login/oauth/access_token",
@@ -62,7 +84,6 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
 
     if user:
-        # Always update the immutable GitHub login in case they renamed on GitHub
         user.github_login = github_user["login"]
         user.email = github_user.get("email")
         user.avatar_url = github_user.get("avatar_url")
@@ -82,7 +103,19 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     jwt_token = create_access_token(user.id)
-    return RedirectResponse(f"{settings.FRONTEND_URL}/auth/callback?token={jwt_token}")
+    # Set the JWT as a cookie so the token never appears in the URL
+    redirect_url = f"{settings.FRONTEND_URL}/auth/callback"
+    response = RedirectResponse(redirect_url)
+    response.set_cookie(
+        "auth_token",
+        jwt_token,
+        max_age=_COOKIE_MAX_AGE,
+        httponly=False,   # must be readable by JS for Authorization headers
+        secure=_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+    return response
 
 
 @router.get("/me", response_model=UserOut)
@@ -159,6 +192,11 @@ async def update_profile(
         stripped = payload.username.strip()
         if not stripped:
             raise HTTPException(status_code=422, detail="Username cannot be empty")
+        if not _USERNAME_RE.match(stripped):
+            raise HTTPException(
+                status_code=422,
+                detail="Username must be 1–32 characters and contain only letters, numbers, hyphens, underscores, or dots",
+            )
         user.username = stripped
     if payload.leetcode_username is not None:
         stripped_lc = payload.leetcode_username.strip()
@@ -177,4 +215,6 @@ async def delete_account(user: User = Depends(get_current_user), db: AsyncSessio
 
 @router.post("/logout")
 async def logout():
-    return {"detail": "Logged out"}
+    response = RedirectResponse(f"{settings.FRONTEND_URL}/", status_code=302)
+    response.delete_cookie("auth_token", path="/")
+    return response

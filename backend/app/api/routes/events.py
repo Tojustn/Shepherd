@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from jose import JWTError, jwt
 from sqlalchemy import select, update
@@ -22,10 +22,13 @@ KEEPALIVE_SECONDS = 25
 
 
 async def _user_from_token(
-    token: str = Query(...),
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """JWT auth via query param — needed because EventSource can't set headers."""
+    """JWT auth via cookie — EventSource sends cookies automatically."""
+    token = request.cookies.get("auth_token")
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         user_id = int(payload["sub"])
