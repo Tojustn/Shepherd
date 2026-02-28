@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/auth";
 import { Loading } from "@/components/Loading";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export default function AuthCallback() {
+function AuthCallbackInner() {
   const router = useRouter();
   const params = useSearchParams();
   const { refreshToken } = useAuth();
@@ -27,4 +27,12 @@ export default function AuthCallback() {
   }, []);
 
   return <Loading />;
+}
+
+export default function AuthCallback() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <AuthCallbackInner />
+    </Suspense>
+  );
 }

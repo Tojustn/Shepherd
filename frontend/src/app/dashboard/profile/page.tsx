@@ -296,7 +296,7 @@ export default function ProfilePage() {
                 maxLength={64}
               />
               <button
-                onClick={saveLcUsername}
+                onClick={() => saveLcUsername()}
                 disabled={lcSaving || lcUsername === (profile.leetcode_username ?? "")}
                 className="btn btn-sm gap-1.5 font-black text-white border-none min-w-[80px]"
                 style={{
@@ -310,7 +310,7 @@ export default function ProfilePage() {
             {profile.leetcode_username && (
               <div className="flex items-center gap-3 mt-1">
                 <button
-                  onClick={importLcSolves}
+                  onClick={() => importLcSolves()}
                   disabled={lcImporting}
                   className="flex items-center gap-1.5 text-xs font-black transition-colors"
                   style={{ color: "var(--game-accent)" }}
@@ -370,7 +370,7 @@ export default function ProfilePage() {
                   className="input input-bordered input-error input-sm flex-1 font-mono font-bold"
                 />
                 <button
-                  onClick={deleteAccount}
+                  onClick={() => deleteAccount()}
                   disabled={deleteConfirm !== "DELETE" || deleting}
                   className="btn btn-sm btn-error font-black"
                 >
