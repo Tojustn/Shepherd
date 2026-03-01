@@ -48,9 +48,9 @@ async def github_callback(
     installation_id: str | None = None,
     setup_action: str | None = None,
 ):
-    # GitHub App installation callback — no OAuth state, redirect to OAuth login
+    # GitHub App installation callback — no OAuth state, redirect back to onboarding step 1
     if installation_id:
-        return RedirectResponse(settings.GITHUB_REDIRECT_URL.replace("/callback", "/login"))
+        return RedirectResponse(f"{settings.FRONTEND_URL}/onboarding?step=1")
 
     # Validate OAuth state to prevent CSRF
     if not state:

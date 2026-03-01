@@ -1,5 +1,7 @@
 # Shepherd
 
+**Live at [shepherd-app.dev](https://shepherd-app.dev)**
+
 Personal developer command center with gamification. Earn XP and level up for pushing commits and solving LeetCode problems. Track GitHub and LeetCode streaks.
 ## Stack
 
