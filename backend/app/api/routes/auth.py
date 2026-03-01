@@ -33,7 +33,7 @@ async def github_login():
     url = (
         "https://github.com/login/oauth/authorize"
         f"?client_id={settings.GITHUB_OAUTH_CLIENT_ID}"
-        f"&redirect_uri={settings.GITHUB_REDIRECT_URI}"
+        f"&redirect_uri={settings.GITHUB_REDIRECT_URL}"
         f"&state={state}"
         "&scope=read:user,user:email,repo"
     )
@@ -106,6 +106,7 @@ async def github_callback(
     # Set the JWT as a cookie so the token never appears in the URL
     redirect_url = f"{settings.FRONTEND_URL}/auth/callback"
     response = RedirectResponse(redirect_url)
+    cookie_domain = None if settings.is_dev else ".shepherd-app.dev"
     response.set_cookie(
         "auth_token",
         jwt_token,
@@ -114,6 +115,7 @@ async def github_callback(
         secure=_COOKIE_SECURE,
         samesite="lax",
         path="/",
+        domain=cookie_domain,
     )
     return response
 

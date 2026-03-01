@@ -11,3 +11,4 @@ dist/
 alembic/versions/*.py
 .ruff_cache/
 .DS_Store
+secrets.json

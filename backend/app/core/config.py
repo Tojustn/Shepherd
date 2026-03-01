@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_SECRET: str = ""
     GITHUB_OAUTH_CLIENT_ID: str = ""
     GITHUB_OAUTH_CLIENT_SECRET: str = ""
-    GITHUB_REDIRECT_URI: str = "http://localhost:8000/api/auth/github/callback"
+    GITHUB_REDIRECT_URL: str = "http://localhost:8000/api/auth/github/callback"
     GITHUB_APP_NAME: str = ""
 
     OPENAI_API_KEY: str = ""

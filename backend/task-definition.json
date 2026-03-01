@@ -1,0 +1,53 @@
+{
+  "family": "shepherd-backend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::325729007202:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "backend",
+      "image": "325729007202.dkr.ecr.us-east-2.amazonaws.com/shepherd-backend:latest",
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "secrets": [
+        {"name": "SECRET_KEY", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:SECRET_KEY::"},
+        {"name": "DATABASE_URL", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:DATABASE_URL::"},
+        {"name": "REDIS_URL", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:REDIS_URL::"},
+        {"name": "FRONTEND_URL", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:FRONTEND_URL::"},
+        {"name": "ALLOWED_ORIGINS", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:ALLOWED_ORIGINS::"},
+        {"name": "GITHUB_CLIENT_ID", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:GITHUB_CLIENT_ID::"},
+        {"name": "GITHUB_CLIENT_SECRET", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:GITHUB_CLIENT_SECRET::"},
+        {"name": "GITHUB_WEBHOOK_SECRET", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:GITHUB_WEBHOOK_SECRET::"},
+        {"name": "GITHUB_OAUTH_CLIENT_ID", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:GITHUB_OAUTH_CLIENT_ID::"},
+        {"name": "GITHUB_OAUTH_CLIENT_SECRET", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:GITHUB_OAUTH_CLIENT_SECRET::"},
+        {"name": "ANTHROPIC_API_KEY", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:ANTHROPIC_API_KEY::"},
+        {"name": "GITHUB_REDIRECT_URL", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:GITHUB_REDIRECT_URL::"},
+        {"name": "APP_ENV", "valueFrom": "arn:aws:secretsmanager:us-east-2:325729007202:secret:shepherd/backend-JfnkbF:APP_ENV::"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/shepherd-backend",
+          "awslogs-region": "us-east-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    },
+    {
+      "name": "redis",
+      "image": "redis:7-alpine",
+      "portMappings": [
+        {
+          "containerPort": 6379,
+          "protocol": "tcp"
+        }
+      ]
+    }
+  ]
+}
