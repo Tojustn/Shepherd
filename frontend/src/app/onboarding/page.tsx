@@ -1,7 +1,7 @@
 // app/onboarding/page.tsx
 "use client";
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/auth";
 import { StepDots } from "@/components/onboarding/StepDots";
 import { WelcomeStep } from "@/components/onboarding/steps/WelcomeStep";
@@ -13,10 +13,12 @@ import { LCStatus } from "../../components/onboarding/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export default function OnboardingPage() {
+function OnboardingInner() {
   const { token } = useAuth();
   const router = useRouter();
-  const [step, setStep] = useState(0);
+  const searchParams = useSearchParams();
+  const step = Number(searchParams.get("step") ?? "0");
+  const setStep = (n: number) => router.push(`/onboarding?step=${n}`);
   const [username, setUsername] = useState("");
   const [appInstalled, setAppInstalled] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -161,5 +163,13 @@ export default function OnboardingPage() {
         </button>
       )}
     </div>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense>
+      <OnboardingInner />
+    </Suspense>
   );
 }
