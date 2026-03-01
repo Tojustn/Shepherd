@@ -141,8 +141,8 @@ function OnboardingInner() {
           appInstalled={appInstalled}
           lcStatus={lcStatus}
           completing={completing}
-          onBack={() => setStep((s) => s - 1)}
-          onNext={() => setStep((s) => s + 1)}
+          onBack={() => setStep(step - 1)}
+          onNext={() => setStep(step + 1)}
           onImport={saveLcAndImport}
           onComplete={complete}
         />
