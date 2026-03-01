@@ -45,7 +45,13 @@ async def github_callback(
     code: str,
     db: AsyncSession = Depends(get_db),
     state: str | None = None,
+    installation_id: str | None = None,
+    setup_action: str | None = None,
 ):
+    # GitHub App installation callback — no OAuth state, redirect to OAuth login
+    if installation_id:
+        return RedirectResponse(settings.GITHUB_REDIRECT_URL.replace("/callback", "/login"))
+
     # Validate OAuth state to prevent CSRF
     if not state:
         raise HTTPException(status_code=400, detail="Missing OAuth state")
