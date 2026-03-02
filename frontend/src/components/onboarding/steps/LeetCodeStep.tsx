@@ -1,5 +1,6 @@
 "use client";
-import { Check, Code2, Loader2 } from "lucide-react";
+import { Check, Code2, Eye, EyeOff, Loader2 } from "lucide-react";
+import { useState } from "react";
 import { LCStatus } from "../types";
 
 export function LeetCodeStep({
@@ -23,6 +24,8 @@ export function LeetCodeStep({
   lcImportError: string | null;
   setLcImportError: (v: string | null) => void;
 }) {
+  const [showCookie, setShowCookie] = useState(false);
+
   return (
     <>
       <div className="flex flex-col gap-2">
@@ -111,16 +114,29 @@ export function LeetCodeStep({
             </div>
           )}
 
-          <textarea
-            placeholder="Paste LEETCODE_SESSION value here…"
-            value={lcSession}
-            onChange={(e) => { setLcSession(e.target.value); setLcImportError(null); }}
-            disabled={lcStatus === "importing"}
-            rows={2}
-            className="w-full rounded-2xl border-2 border-base-300 px-4 py-3 bg-transparent text-xs font-mono text-base-content/70 outline-none resize-none placeholder:text-base-content/20 focus:border-base-content/30 transition-colors"
-          />
+          <div className="relative flex items-center">
+            <input
+              type={showCookie ? "text" : "password"}
+              placeholder="Paste LEETCODE_SESSION value here…"
+              value={lcSession}
+              onChange={(e) => { setLcSession(e.target.value); setLcImportError(null); }}
+              disabled={lcStatus === "importing"}
+              className="w-full rounded-2xl border-2 border-base-300 px-4 py-3 pr-10 bg-transparent text-xs font-mono text-base-content/70 outline-none placeholder:text-base-content/20 focus:border-base-content/30 transition-colors"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              onClick={() => setShowCookie(!showCookie)}
+              className="absolute right-3 text-base-content/30 hover:text-base-content/60 transition-colors"
+              tabIndex={-1}
+            >
+              {showCookie ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
           <p className="mt-1 text-xs font-semibold text-base-content/30 pl-1">
-            Without this we can only import your 20 most recent solves.
+            Optional — without this we can only import your 20 most recent solves.
+            Your cookie is sent directly to LeetCode to fetch your history and is never stored.
           </p>
         </div>
 
