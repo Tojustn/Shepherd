@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/auth";
 import Link from "next/link";
-import { Search, ExternalLink } from "lucide-react";
+import { Search, ExternalLink, LayoutGrid, List } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -73,6 +73,7 @@ export default function QuestBoardPage() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [view, setView] = useState<"grid" | "list">("grid");
 
   useEffect(() => {
     if (!token) return;
@@ -95,14 +96,32 @@ export default function QuestBoardPage() {
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <h1 className="font-black text-2xl text-base-content">Quest Board</h1>
-        <div className="ml-auto relative w-64">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/30" />
-          <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search quests..."
-            className="w-full rounded-xl border-2 border-base-300 bg-base-100 pl-9 pr-4 py-2 text-sm font-bold text-base-content placeholder:text-base-content/30 outline-none focus:border-base-content/40 transition-all"
-          />
+        <div className="ml-auto flex items-center gap-2">
+          <div className="relative w-64">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/30" />
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search quests..."
+              className="w-full rounded-xl border-2 border-base-300 bg-base-100 pl-9 pr-4 py-2 text-sm font-bold text-base-content placeholder:text-base-content/30 outline-none focus:border-base-content/40 transition-all"
+            />
+          </div>
+          <div className="flex rounded-xl border-2 border-base-300 overflow-hidden">
+            <button
+              onClick={() => setView("grid")}
+              className={`p-2 transition-colors ${view === "grid" ? "bg-base-300 text-base-content" : "bg-base-100 text-base-content/30 hover:text-base-content/60"}`}
+              title="Grid view"
+            >
+              <LayoutGrid size={15} />
+            </button>
+            <button
+              onClick={() => setView("list")}
+              className={`p-2 transition-colors ${view === "list" ? "bg-base-300 text-base-content" : "bg-base-100 text-base-content/30 hover:text-base-content/60"}`}
+              title="List view"
+            >
+              <List size={15} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -127,7 +146,7 @@ export default function QuestBoardPage() {
         </div>
       ) : filtered.length === 0 ? (
         <p className="text-sm font-bold text-base-content/30 text-center mt-20">No quests found</p>
-      ) : (
+      ) : view === "grid" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map(repo => {
             const status = getStatus(repo.pushed_at);
@@ -184,6 +203,56 @@ export default function QuestBoardPage() {
 
                 {/* Progress bar */}
                 <ProgressBar pct={activityPct} />
+              </Link>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {filtered.map(repo => {
+            const status = getStatus(repo.pushed_at);
+            const langColor = repo.language ? (LANG_COLORS[repo.language] ?? "var(--game-accent)") : null;
+
+            return (
+              <Link
+                key={repo.id}
+                href={`/dashboard/repos/${repo.name}`}
+                className="rounded-xl bg-base-100 border-2 border-base-300 px-4 py-3 flex items-center gap-3 transition-all hover:border-base-content/25"
+              >
+                <span className="text-sm shrink-0">{status.icon}</span>
+                <p className="font-black text-sm text-base-content truncate flex-1">{repo.name}</p>
+                {repo.description && (
+                  <p className="text-xs font-semibold text-base-content/40 truncate flex-1 hidden md:block">{repo.description}</p>
+                )}
+                <div className="flex items-center gap-2 shrink-0">
+                  {langColor && (
+                    <span
+                      className="text-[10px] font-bold px-2 py-0.5 rounded-full hidden sm:inline"
+                      style={{ backgroundColor: langColor + "33", color: langColor, border: `1px solid ${langColor}55` }}
+                    >
+                      {repo.language}
+                    </span>
+                  )}
+                  <span
+                    className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full"
+                    style={{
+                      backgroundColor: status.color + "22",
+                      color: status.color,
+                      border: `1px solid ${status.color}55`,
+                    }}
+                  >
+                    {status.label}
+                  </span>
+                  {repo.pushed_at && (
+                    <span className="text-xs font-bold text-base-content/40 w-20 text-right hidden sm:block">{timeAgo(repo.pushed_at)}</span>
+                  )}
+                  <button
+                    onClick={e => { e.preventDefault(); e.stopPropagation(); window.open(repo.url, "_blank", "noopener,noreferrer"); }}
+                    className="text-base-content/20 hover:text-base-content/60 transition-colors"
+                  >
+                    <ExternalLink size={12} />
+                  </button>
+                </div>
               </Link>
             );
           })}
