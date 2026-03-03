@@ -35,7 +35,7 @@ async def github_login():
         f"?client_id={settings.GITHUB_OAUTH_CLIENT_ID}"
         f"&redirect_uri={settings.GITHUB_REDIRECT_URL}"
         f"&state={state}"
-        "&scope=read:user,user:email,repo"
+        "&scope=read:user%20user:email%20repo"
     )
     return RedirectResponse(url)
 
