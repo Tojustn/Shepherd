@@ -68,7 +68,7 @@ function SectionHeader({ icon, color, label, right }: { icon: React.ReactNode; c
 
 export default function Dashboard() {
   const { token } = useAuth();
-  const { subscribe, triggerLevelUp } = useXPContext();
+  const { subscribe, subscribeGoals, triggerLevelUp } = useXPContext();
   const queryClient = useQueryClient();
   const levelUpFiredRef = useRef(false);
 
@@ -109,6 +109,13 @@ export default function Dashboard() {
       );
     });
   }, [subscribe, queryClient]);
+
+  // Re-fetch user (includes daily_quests + recent_goals) when any goal changes
+  useEffect(() => {
+    return subscribeGoals(() => {
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+    });
+  }, [subscribeGoals, queryClient]);
 
   if (!user) return <p className="p-8 text-base-content/40 font-mono">Loading...</p>;
 

@@ -18,14 +18,17 @@ export interface XPEvent {
 }
 
 type XPListener = (event: XPEvent) => void;
+type GoalChangeListener = () => void;
 
 interface XPContextValue {
   subscribe: (fn: XPListener) => () => void;
+  subscribeGoals: (fn: GoalChangeListener) => () => void;
   triggerLevelUp: (level: number) => void;
 }
 
 const XPContext = createContext<XPContextValue>({
   subscribe: () => () => {},
+  subscribeGoals: () => () => {},
   triggerLevelUp: () => {},
 });
 
@@ -33,6 +36,7 @@ export function XPProvider({ children }: { children: React.ReactNode }) {
   const { token } = useAuth();
   const [levelUpLevel, setLevelUpLevel] = useState<number | null>(null);
   const listeners = useRef<Set<XPListener>>(new Set());
+  const goalListeners = useRef<Set<GoalChangeListener>>(new Set());
 
   const triggerLevelUp = useCallback((level: number) => {
     setLevelUpLevel(level);
@@ -41,6 +45,11 @@ export function XPProvider({ children }: { children: React.ReactNode }) {
   const subscribe = useCallback((fn: XPListener) => {
     listeners.current.add(fn);
     return () => listeners.current.delete(fn);
+  }, []);
+
+  const subscribeGoals = useCallback((fn: GoalChangeListener) => {
+    goalListeners.current.add(fn);
+    return () => goalListeners.current.delete(fn);
   }, []);
 
   useEffect(() => {
@@ -56,6 +65,11 @@ export function XPProvider({ children }: { children: React.ReactNode }) {
       listeners.current.forEach((fn) => fn(event));
     });
 
+    const notifyGoals = () => goalListeners.current.forEach((fn) => fn());
+    es.addEventListener("goal_updated", notifyGoals);
+    es.addEventListener("goal_created", notifyGoals);
+    es.addEventListener("goal_deleted", notifyGoals);
+
     return () => es.close();
   }, [token]);
 
@@ -69,7 +83,7 @@ export function XPProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <XPContext.Provider value={{ subscribe, triggerLevelUp }}>
+    <XPContext.Provider value={{ subscribe, subscribeGoals, triggerLevelUp }}>
       {children}
       {levelUpLevel !== null && (
         <LevelUpBanner level={levelUpLevel} onDismiss={handleDismiss} />
