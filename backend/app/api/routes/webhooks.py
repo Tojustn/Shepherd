@@ -82,6 +82,9 @@ async def handle_push(data: dict, db: AsyncSession, user: User) -> dict[str, Any
             )
         await update_streak(db, user, StreakType.GITHUB)
         updated_goals = await increment_commit_goals(user, db)
+        for goal in updated_goals:
+            if goal.completed:
+                await award_xp(db, user, XPSource.GOAL_COMPLETE, meta={"kind": "daily"})
         await db.commit()
         for goal in updated_goals:
             await db.refresh(goal)

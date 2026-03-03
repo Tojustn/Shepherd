@@ -71,7 +71,7 @@ export default function GoalsPage() {
 
   useEffect(() => {
     if (!token) return;
-    const es = new EventSource(`${API_URL}/api/events/stream?token=${token}`);
+    const es = new EventSource(`${API_URL}/api/events/stream`, { withCredentials: true });
     es.addEventListener("goal_updated", () => {
       queryClient.invalidateQueries({ queryKey: ["goals"] });
     });

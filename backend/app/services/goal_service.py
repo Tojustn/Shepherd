@@ -107,3 +107,15 @@ async def increment_commit_goals(
         await update_goal(goal_id=goal.id, user=user, db=db, new_value=1)
         return [goal]
     return []
+
+
+async def increment_leetcode_goals(
+    user: User,
+    db: AsyncSession,
+) -> list[Goal]:
+    """Complete today's daily LeetCode goal (and return it) when a problem is solved."""
+    goal = await fetch_daily_leetcode_goal(user.id, db)
+    if goal and not goal.completed:
+        await update_goal(goal_id=goal.id, user=user, db=db, new_value=goal.current + 1)
+        return [goal]
+    return []

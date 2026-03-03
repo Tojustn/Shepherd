@@ -12,6 +12,10 @@ from app.services.cache import cache_delete
 from app.services.sse_service import connect, disconnect, push
 from app.schemas.leetcode import LeetCodeSolveUpdate
 from app.services.leetcode_service import update_solve, delete_solve, get_stats, log_solve, get_solve, search_problems, import_historical_solves, validate_leetcode_username
+from app.services.goal_service import increment_leetcode_goals
+from app.schemas.goal import GoalOut
+from app.models.xp_event import XPSource
+from app.services.xp_service import award_xp
 from app.schemas.leetcode import LeetCodeStatsOut
 
 router = APIRouter(prefix="/leetcode", tags=["leetcode"])
@@ -78,18 +82,19 @@ async def create_solve(
 ):
     try:
         solve, xp_awarded = await log_solve(db, user, payload)
+        updated_goals = await increment_leetcode_goals(user, db)
+        for goal in updated_goals:
+            if goal.completed:
+                await award_xp(db, user, XPSource.GOAL_COMPLETE, meta={"kind": "daily"})
         await db.commit()
         reloaded = await db.execute(
             select(LeetCodeSolve).where(LeetCodeSolve.id == solve.id).options(selectinload(LeetCodeSolve.problem))
         )
         solve = reloaded.scalar_one()
         await cache_delete(f"user:me:{user.id}")
-        await push(user.id, "xp_gained", {
-            "amount": xp_awarded,
-            "source": "leetcode_solve",
-            "total_xp": user.xp,
-            "level": user.level,
-        })
+        for goal in updated_goals:
+            await db.refresh(goal)
+            await push(user.id, "goal_updated", GoalOut.model_validate(goal).model_dump(mode="json"))
         result = LeetCodeSolveOut.model_validate(solve)
         result.xp_awarded = xp_awarded
         return result

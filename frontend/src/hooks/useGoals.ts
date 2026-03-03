@@ -31,7 +31,7 @@ export function useGoals() {
 
   useEffect(() => {
     if (!token) return;
-    const es = new EventSource(`${API_URL}/api/events/stream?token=${token}`);
+    const es = new EventSource(`${API_URL}/api/events/stream`, { withCredentials: true });
     es.addEventListener("goal_updated", () => queryClient.invalidateQueries({ queryKey: ["goals"] }));
     es.addEventListener("goal_created", () => queryClient.invalidateQueries({ queryKey: ["goals", "custom"] }));
     es.addEventListener("goal_deleted", () => queryClient.invalidateQueries({ queryKey: ["goals", "custom"] }));
