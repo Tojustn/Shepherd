@@ -6,7 +6,7 @@ import { Navbar } from "@/components/Navbar";
 import { HeroText } from "@/components/HeroText";
 import { useAuth } from "@/context/auth";
 import {
-  LayoutDashboard, GitBranch, Target, Code2, Play, ArrowRight,
+  LayoutDashboard, GitBranch, Target, Code2, ArrowRight,
   Flame, Zap, Filter, CheckCircle2, Star,
 } from "lucide-react";
 
@@ -291,17 +291,6 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Demo */}
-        <section className="w-full max-w-3xl px-4 pb-24 flex flex-col gap-4 items-center">
-          <h2 className="text-2xl font-black text-base-content">See it in action</h2>
-          <div className="relative w-full rounded-2xl border-2 border-base-300 overflow-hidden"
-            style={{ aspectRatio: "16/9", boxShadow: "0 8px 0 rgba(0,0,0,0.08)", backgroundColor: "color-mix(in srgb, var(--color-base-200) 80%, transparent)" }}>
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/25">
-              <div className="rounded-full p-5 border-2 border-current"><Play size={28} /></div>
-              <p className="text-xs font-black tracking-widest uppercase">Demo coming soon</p>
-            </div>
-          </div>
-        </section>
 
         {/* Branch graph — desktop */}
         <section id="features" className="w-full max-w-3xl px-4 pb-32">
