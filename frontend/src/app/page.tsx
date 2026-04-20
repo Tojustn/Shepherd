@@ -10,7 +10,10 @@ import {
   Flame, Zap, Filter, CheckCircle2, Star,
 } from "lucide-react";
 
-const GITHUB_LOGIN_URL = `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/auth/github/login`;
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const GITHUB_LOGIN_URL = `${API_BASE}/api/auth/github/login`;
+const DEV_LOGIN_URL = `${API_BASE}/api/auth/dev-login`;
+const IS_LOCAL_DEV = !process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_URL.includes("localhost") || process.env.NEXT_PUBLIC_API_URL.includes("127.0.0.1");
 
 // ─── Mock Visuals ─────────────────────────────────────────────────────────────
 
@@ -285,6 +288,11 @@ export default function Home() {
             </svg>
             Get started with GitHub
           </a>
+          {IS_LOCAL_DEV && (
+            <a href={DEV_LOGIN_URL} className="btn btn-sm gap-2 font-bold border border-base-300 bg-base-200 text-base-content/50 hover:text-base-content">
+              Dev login (local only)
+            </a>
+          )}
           <div className="absolute bottom-10 flex flex-col items-center gap-2 animate-bounce text-base-content/25">
             <span className="text-xs font-black tracking-widest uppercase">Scroll</span>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12l7 7 7-7" /></svg>

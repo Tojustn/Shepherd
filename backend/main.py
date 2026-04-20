@@ -2,9 +2,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.database import create_tables
 from app.core.redis import close_redis, init_redis
 
 
@@ -12,6 +12,9 @@ from app.core.redis import close_redis, init_redis
 async def lifespan(app: FastAPI):
     if not settings.is_dev and settings.SECRET_KEY == "change-me":
         raise RuntimeError("SECRET_KEY must be set to a secure value in production")
+    from app.core.database import _is_sqlite
+    if _is_sqlite:
+        await create_tables()
     await init_redis()
     yield
     await close_redis()
@@ -38,3 +41,4 @@ app.include_router(api_router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+

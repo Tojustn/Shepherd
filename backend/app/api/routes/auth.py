@@ -20,6 +20,7 @@ from app.services.cache import cache_get, cache_set, cache_delete
 from app.services.goal_service import ensure_daily_goals
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+print("AUTH MODULE LOADED", flush=True)
 
 _USERNAME_RE = re.compile(r"^[\w\-\.]{1,32}$")
 _COOKIE_MAX_AGE = settings.JWT_EXPIRE_MINUTES * 60
@@ -225,4 +226,37 @@ async def delete_account(user: User = Depends(get_current_user), db: AsyncSessio
 async def logout():
     response = RedirectResponse(f"{settings.FRONTEND_URL}/", status_code=302)
     response.delete_cookie("auth_token", path="/")
+    return response
+
+
+@router.get("/dev-login")
+async def dev_login(db: AsyncSession = Depends(get_db)):
+    if not settings.is_dev:
+        raise HTTPException(status_code=404)
+    print("DEV LOGIN HIT", flush=True)
+    result = await db.execute(select(User).where(User.github_id == "dev-local-0"))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        user = User(
+            github_id="dev-local-0",
+            github_login="localdev",
+            username="localdev",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        await db.flush()
+        await db.commit()
+
+    jwt_token = create_access_token(user.id)
+    response = RedirectResponse(f"{settings.FRONTEND_URL}/auth/callback")
+    response.set_cookie(
+        "auth_token",
+        jwt_token,
+        max_age=_COOKIE_MAX_AGE,
+        httponly=False,
+        secure=False,
+        samesite="lax",
+        path="/",
+    )
     return response

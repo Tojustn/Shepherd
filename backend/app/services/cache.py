@@ -8,21 +8,29 @@ DEFAULT_TTL = 300  # 5 minutes
 
 async def cache_get(key: str) -> Any | None:
     redis = await get_redis()
+    if redis is None:
+        return None
     value = await redis.get(key)
     return json.loads(value) if value else None
 
 
 async def cache_set(key: str, value: Any, ttl: int = DEFAULT_TTL) -> None:
     redis = await get_redis()
+    if redis is None:
+        return
     await redis.set(key, json.dumps(value), ex=ttl)
 
 
 async def cache_delete(key: str) -> None:
     redis = await get_redis()
+    if redis is None:
+        return
     await redis.delete(key)
 
 async def cache_delete_pattern(pattern: str) -> None:
     redis = await get_redis()
+    if redis is None:
+        return
     cursor = 0
     while True:
         cursor, keys = await redis.scan(cursor, match=pattern, count=100)

@@ -84,6 +84,7 @@ export default function ProfilePage() {
   const [lcUsername, setLcUsername]   = useState("");
   const [lcSaved, setLcSaved]         = useState(false);
   const [lcImported, setLcImported]   = useState<number | null>(null);
+  const [sessionCookie, setSessionCookie] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [showDelete, setShowDelete]   = useState(false);
   const deleteInputRef = useRef<HTMLInputElement>(null);
@@ -139,7 +140,8 @@ export default function ProfilePage() {
     mutationFn: () =>
       fetch(`${API_URL}/api/leetcode/import`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ session_cookie: sessionCookie.trim() || null }),
       }).then((r) => { if (!r.ok) throw new Error("Import failed"); return r.json(); }),
     onSuccess: (data) => {
       setLcImported(data.imported ?? 0);
@@ -308,23 +310,32 @@ export default function ProfilePage() {
               </button>
             </div>
             {profile.leetcode_username && (
-              <div className="flex items-center gap-3 mt-1">
-                <button
-                  onClick={() => importLcSolves()}
-                  disabled={lcImporting}
-                  className="flex items-center gap-1.5 text-xs font-black transition-colors"
-                  style={{ color: "var(--game-accent)" }}
-                >
-                  {lcImporting
-                    ? <><Loader2 size={11} className="animate-spin" /> Importing…</>
-                    : <><Code2 size={11} /> Re-sync solves from Leetcode</>
-                  }
-                </button>
-                {lcImported !== null && !lcImporting && (
-                  <span className="text-xs font-bold text-base-content/40">
-                    {lcImported === 0 ? "Already up to date" : `Imported ${lcImported} new solve${lcImported === 1 ? "" : "s"}`}
-                  </span>
-                )}
+              <div className="flex flex-col gap-2 mt-1">
+                <input
+                  type="password"
+                  value={sessionCookie}
+                  onChange={(e) => setSessionCookie(e.target.value)}
+                  className="input input-bordered input-sm font-mono text-xs w-full"
+                  placeholder="LEETCODE_SESSION cookie (optional — for full history)"
+                />
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => importLcSolves()}
+                    disabled={lcImporting}
+                    className="flex items-center gap-1.5 text-xs font-black transition-colors"
+                    style={{ color: "var(--game-accent)" }}
+                  >
+                    {lcImporting
+                      ? <><Loader2 size={11} className="animate-spin" /> Importing…</>
+                      : <><Code2 size={11} /> Re-sync solves from Leetcode</>
+                    }
+                  </button>
+                  {lcImported !== null && !lcImporting && (
+                    <span className="text-xs font-bold text-base-content/40">
+                      {lcImported === 0 ? "Already up to date" : `Imported ${lcImported} new solve${lcImported === 1 ? "" : "s"}`}
+                    </span>
+                  )}
+                </div>
               </div>
             )}
           </div>

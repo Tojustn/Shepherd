@@ -1,7 +1,6 @@
 # app/models/leetcode.py
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 from typing import TYPE_CHECKING
@@ -18,7 +17,7 @@ class LeetCodeProblem(Base):
     title: Mapped[str] = mapped_column(String(256))
     slug: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     difficulty: Mapped[str] = mapped_column(String(16))  # easy, medium, hard
-    topics: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    topics: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     solves: Mapped[list["LeetCodeSolve"]] = relationship("LeetCodeSolve", back_populates="problem")
 
