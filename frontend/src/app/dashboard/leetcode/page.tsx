@@ -642,20 +642,33 @@ function QueryBuilderGroup({ group, onChange, onRemove, depth, availableLanguage
 
 // ── Log form ──────────────────────────────────────────────────────────────
 
+const LC_DRAFT_KEY = "lc-draft-solve";
+
 function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => void }) {
+  const { theme }   = useTheme();
   const queryClient = useQueryClient();
-  const [query,      setQuery]      = useState("");
+
+  const draft = (() => {
+    try { return JSON.parse(localStorage.getItem(LC_DRAFT_KEY) ?? "{}"); }
+    catch { return {}; }
+  })();
+
+  const [query,      setQuery]      = useState(draft.query      ?? "");
   const [results,    setResults]    = useState<SearchResult[]>([]);
   const [searching,  setSearching]  = useState(false);
-  const [selected,   setSelected]   = useState<SearchResult | null>(null);
+  const [selected,   setSelected]   = useState<SearchResult | null>(draft.selected ?? null);
   const [showDrop,   setShowDrop]   = useState(false);
-  const [language,   setLanguage]   = useState("Python");
-  const [timeC,      setTimeC]      = useState("");
-  const [spaceC,     setSpaceC]     = useState("");
-  const [notes,      setNotes]      = useState("");
-  const [code,       setCode]       = useState("");
-  const [confidence, setConfidence] = useState<number | null>(null);
+  const [language,   setLanguage]   = useState(draft.language   ?? "Python");
+  const [timeC,      setTimeC]      = useState(draft.timeC      ?? "");
+  const [spaceC,     setSpaceC]     = useState(draft.spaceC     ?? "");
+  const [notes,      setNotes]      = useState(draft.notes      ?? "");
+  const [code,       setCode]       = useState(draft.code       ?? "");
+  const [confidence, setConfidence] = useState<number | null>(draft.confidence ?? null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem(LC_DRAFT_KEY, JSON.stringify({ query, selected, language, timeC, spaceC, notes, code, confidence }));
+  }, [query, selected, language, timeC, spaceC, notes, code, confidence]);
 
   useEffect(() => {
     if (!query.trim() || query.length < 2 || selected) {
@@ -685,6 +698,7 @@ function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => vo
   function clear() {
     setSelected(null); setQuery(""); setNotes(""); setCode(""); setLanguage("Python");
     setTimeC(""); setSpaceC(""); setConfidence(null);
+    localStorage.removeItem(LC_DRAFT_KEY);
   }
 
   const { mutate: logSolve, isPending: submitting } = useMutation<Solve, Error>({
@@ -839,12 +853,21 @@ function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => vo
 
           <div className="flex flex-col gap-1">
             <label className="text-xs font-black text-base-content/40">Notes <span className="font-normal opacity-60">(optional)</span></label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Key insight, approach, edge cases…" className="textarea textarea-bordered text-sm resize-none h-20 w-full" />
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Key insight, approach, edge cases…" className="textarea textarea-bordered text-sm resize-y h-20 w-full" />
           </div>
 
           <div className="flex flex-col gap-1">
             <label className="text-xs font-black text-base-content/40">Code</label>
-            <textarea value={code} onChange={e => setCode(e.target.value)} placeholder="Paste your solution…" className="textarea textarea-bordered font-mono text-xs resize-none h-36 w-full" required />
+            <div className="rounded-xl overflow-hidden border border-base-300">
+              <CodeMirror
+                value={code}
+                onChange={setCode}
+                extensions={cmExtensions(language)}
+                theme={theme === "dark" ? githubDark : githubLight}
+                basicSetup={{ lineNumbers: true, foldGutter: false, autocompletion: false }}
+                style={{ fontSize: "13px", minHeight: "144px" }}
+              />
+            </div>
           </div>
 
           <button type="submit" disabled={submitting} className="btn btn-sm font-black text-white border-none gap-2"
@@ -1149,7 +1172,8 @@ function SolveAttempt({
 function QuickSolveForm({ problem, token, onSuccess, onCancel }: {
   problem: Problem; token: string; onSuccess: () => void; onCancel: () => void;
 }) {
-  const queryClient = useQueryClient();
+  const { theme }    = useTheme();
+  const queryClient  = useQueryClient();
   const [language,   setLanguage]   = useState("Python");
   const [timeC,      setTimeC]      = useState("");
   const [spaceC,     setSpaceC]     = useState("");
@@ -1219,12 +1243,21 @@ function QuickSolveForm({ problem, token, onSuccess, onCancel }: {
 
       <div className="flex flex-col gap-1">
         <label className="text-xs font-black text-base-content/40">Notes <span className="font-normal opacity-60">(optional)</span></label>
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Key insight, approach, edge cases…" className="textarea textarea-bordered text-sm resize-none h-20 w-full" />
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Key insight, approach, edge cases…" className="textarea textarea-bordered text-sm resize-y h-20 w-full" />
       </div>
 
       <div className="flex flex-col gap-1">
         <label className="text-xs font-black text-base-content/40">Code</label>
-        <textarea value={code} onChange={e => setCode(e.target.value)} placeholder="Paste your solution…" className="textarea textarea-bordered font-mono text-xs resize-none h-36 w-full" required />
+        <div className="rounded-xl overflow-hidden border border-base-300">
+          <CodeMirror
+            value={code}
+            onChange={setCode}
+            extensions={cmExtensions(language)}
+            theme={theme === "dark" ? githubDark : githubLight}
+            basicSetup={{ lineNumbers: true, foldGutter: false, autocompletion: false }}
+            style={{ fontSize: "13px", minHeight: "144px" }}
+          />
+        </div>
       </div>
 
       {errMsg && <p className="text-xs font-bold text-error">{errMsg}</p>}
