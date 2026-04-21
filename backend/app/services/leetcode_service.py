@@ -176,6 +176,9 @@ async def update_solve(
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(solve, field, value)
 
+    if solve.is_imported and solve.code:
+        solve.is_imported = False
+
     return solve
 
 
