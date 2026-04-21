@@ -26,7 +26,7 @@ import {
 } from "@tanstack/react-table";
 import {
   Code2, Search, Plus, ChevronDown, ChevronUp,
-  X, Check, Loader2, Pencil, ArrowUp, ArrowDown, SlidersHorizontal, Trash2,
+  X, Check, Loader2, Pencil, ArrowUp, ArrowDown, SlidersHorizontal, Trash2, ExternalLink,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -795,6 +795,16 @@ function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => vo
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl border-2" style={{ borderColor: diffC.border, backgroundColor: diffC.bg }}>
             <span className="font-mono text-xs text-base-content/40 shrink-0">{selected.leetcode_id}.</span>
             <span className="font-black text-sm text-base-content flex-1 min-w-0 truncate">{selected.title}</span>
+            <a
+              href={`https://leetcode.com/problems/${selected.slug}/`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              className="shrink-0 text-base-content/30 hover:text-base-content/70 transition-colors"
+              title="Open on LeetCode"
+            >
+              <ExternalLink size={13} />
+            </a>
             <DiffBadge difficulty={selected.difficulty} />
             <span className="font-black text-sm shrink-0" style={{ color: diffC.text }}>+{DIFF_XP[diff] ?? 20} XP</span>
           </div>
@@ -1261,6 +1271,16 @@ function SolveGroupCard({
           <span className="font-mono text-xs text-base-content/30 shrink-0 w-10">{group.problem.leetcode_id}.</span>
           <span className="flex-1 font-black text-sm text-base-content truncate min-w-0">{group.problem.title}</span>
         </button>
+        <a
+          href={`https://leetcode.com/problems/${group.problem.slug}/`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          className="shrink-0 text-base-content/20 hover:text-base-content/60 transition-colors"
+          title="Open on LeetCode"
+        >
+          <ExternalLink size={13} />
+        </a>
 
         <DiffBadge difficulty={group.problem.difficulty} />
 
@@ -1497,14 +1517,14 @@ export default function LeetCodePage() {
 
       {/* Log Solve modal */}
       <dialog ref={modalRef} className="modal">
-        <div className="modal-box w-full max-w-2xl p-0 flex flex-col">
+        <div className="modal-box w-full max-w-2xl h-[60vh] p-0 flex flex-col">
           <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
             <p className="font-black text-sm text-base-content">Log a Solve</p>
             <button type="button" onClick={() => modalRef.current?.close()} className="text-base-content/30 hover:text-base-content/60 transition-colors">
               <X size={15} />
             </button>
           </div>
-          <div className="overflow-y-auto min-h-0 px-6 pb-6">
+          <div className="overflow-y-auto min-h-0 flex-1 px-6 pb-6">
             {token && <LogSolveForm token={token} onSuccess={handleSuccess} />}
           </div>
         </div>

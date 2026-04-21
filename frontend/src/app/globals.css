@@ -43,3 +43,7 @@
 .xp-toast {
   animation: xp-float 2.8s ease-out forwards;
 }
+
+.modal-box {
+  max-height: 75vh !important;
+}
