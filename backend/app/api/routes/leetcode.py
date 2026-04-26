@@ -7,7 +7,7 @@ from app.core.security import get_current_user
 from app.core.database import get_db
 from app.models.leetcode import LeetCodeSolve, LeetCodeProblem
 from app.models.user import User
-from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveOut, LCImportRequest
+from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveOut, LCImportRequest, LeetCodeProblemUpdate, LeetCodeProblemOut
 from app.services.cache import cache_delete
 from app.services.sse_service import connect, disconnect, push
 from app.schemas.leetcode import LeetCodeSolveUpdate
@@ -170,6 +170,31 @@ async def remove_solve(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+
+
+@router.patch("/problems/{problem_id}", response_model=LeetCodeProblemOut)
+async def patch_problem_topics(
+    problem_id: int,
+    payload: LeetCodeProblemUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    solve_check = await db.execute(
+        select(LeetCodeSolve).where(
+            LeetCodeSolve.problem_id == problem_id,
+            LeetCodeSolve.user_id == user.id,
+        ).limit(1)
+    )
+    if not solve_check.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Problem not found")
+    result = await db.execute(select(LeetCodeProblem).where(LeetCodeProblem.id == problem_id))
+    problem = result.scalar_one_or_none()
+    if not problem:
+        raise HTTPException(status_code=404, detail="Problem not found")
+    problem.topics = payload.topics
+    await db.commit()
+    await db.refresh(problem)
+    return LeetCodeProblemOut.model_validate(problem)
 
 
 @router.get("/stats", response_model=LeetCodeStatsOut)

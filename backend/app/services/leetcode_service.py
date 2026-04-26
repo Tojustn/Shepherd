@@ -173,11 +173,14 @@ async def update_solve(
     if not solve:
         raise ValueError("Solve not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
         setattr(solve, field, value)
 
     if solve.is_imported and solve.code:
         solve.is_imported = False
+        if "solved_at" not in updates:
+            solve.solved_at = datetime.now(tz=timezone.utc)
 
     return solve
 

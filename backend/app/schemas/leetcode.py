@@ -48,6 +48,10 @@ class LCImportRequest(BaseModel):
     session_cookie: str | None = None
 
 
+class LeetCodeProblemUpdate(BaseModel):
+    topics: list[str]
+
+
 class LeetCodeSolveUpdate(BaseModel):
     notes: str | None = None
     code: str | None = None
@@ -55,6 +59,7 @@ class LeetCodeSolveUpdate(BaseModel):
     time_complexity: str | None = None
     space_complexity: str | None = None
     confidence: int | None = None
+    solved_at: datetime | None = None
 
 
 class TopicStat(BaseModel):

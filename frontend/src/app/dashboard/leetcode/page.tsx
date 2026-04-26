@@ -26,7 +26,7 @@ import {
 } from "@tanstack/react-table";
 import {
   Code2, Search, Plus, ChevronDown, ChevronUp,
-  X, Check, Loader2, Pencil, ArrowUp, ArrowDown, SlidersHorizontal, Trash2, ExternalLink,
+  X, Check, Loader2, Pencil, ArrowUp, ArrowDown, SlidersHorizontal, Trash2, ExternalLink, Download,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -127,6 +127,18 @@ const LANG_COLORS: Record<string, string> = {
   "c#":       "#9b4f96",
 };
 
+const LC_TOPICS = [
+  "Array", "String", "Hash Table", "Dynamic Programming", "Math", "Sorting",
+  "Greedy", "Depth-First Search", "Breadth-First Search", "Binary Search",
+  "Tree", "Matrix", "Two Pointers", "Bit Manipulation", "Prefix Sum",
+  "Heap (Priority Queue)", "Graph", "Simulation", "Backtracking", "Stack",
+  "Counting", "Sliding Window", "Union Find", "Linked List", "Monotonic Stack",
+  "Ordered Set", "Divide and Conquer", "Queue", "Trie", "Recursion",
+  "Memoization", "Binary Indexed Tree", "Segment Tree", "Geometry",
+  "Topological Sort", "Number Theory", "Combinatorics", "Game Theory",
+  "Shortest Path", "Iterator", "Design", "Interactive",
+];
+
 const SORT_OPTIONS = [
   { id: "lastSolved", label: "Last Solved"  },
   { id: "id",         label: "Problem #"    },
@@ -218,7 +230,11 @@ const COLUMNS = [
     enableColumnFilter: false,
   }),
   columnHelper.accessor(
-    g => new Date(g.solves[g.solves.length - 1]?.solved_at ?? 0).getTime(),
+    g => {
+      const nonImported = g.solves.filter(s => !s.is_imported);
+      if (nonImported.length === 0) return 0;
+      return new Date(nonImported[nonImported.length - 1].solved_at).getTime();
+    },
     { id: "lastSolved", enableColumnFilter: false }
   ),
 ];
@@ -890,6 +906,7 @@ type EditPayload = {
   confidence: number | null;
   notes: string | null;
   code: string | null;
+  solved_at?: string;
 };
 
 function SolveAttempt({
@@ -903,12 +920,13 @@ function SolveAttempt({
   const [editing,   setEditing]   = useState(false);
   const [editError, setEditError] = useState("");
 
-  const [eLang,   setELang]   = useState(solve.language          ?? "Python");
-  const [eTimeC,  setETimeC]  = useState(solve.time_complexity   ?? "");
-  const [eSpaceC, setESpaceC] = useState(solve.space_complexity  ?? "");
-  const [eConf,   setEConf]   = useState<number | null>(solve.confidence ?? null);
-  const [eNotes,  setENotes]  = useState(solve.notes ?? "");
-  const [eCode,   setECode]   = useState(solve.code  ?? "");
+  const [eLang,      setELang]      = useState(solve.language          ?? "Python");
+  const [eTimeC,     setETimeC]     = useState(solve.time_complexity   ?? "");
+  const [eSpaceC,    setESpaceC]    = useState(solve.space_complexity  ?? "");
+  const [eConf,      setEConf]      = useState<number | null>(solve.confidence ?? null);
+  const [eNotes,     setENotes]     = useState(solve.notes ?? "");
+  const [eCode,      setECode]      = useState(solve.code  ?? "");
+  const [eSolvedAt,  setESolvedAt]  = useState("");
 
   const isFirst    = attemptNumber === 1;
   const label      = isFirst ? "Initial Solve" : `Re-solve #${attemptNumber}`;
@@ -981,20 +999,22 @@ function SolveAttempt({
   function openEdit() {
     setELang(solve.language ?? "Python"); setETimeC(solve.time_complexity ?? "");
     setESpaceC(solve.space_complexity ?? ""); setEConf(solve.confidence ?? null);
-    setENotes(solve.notes ?? ""); setECode(solve.code ?? "");
+    setENotes(solve.notes ?? ""); setECode(solve.code ?? ""); setESolvedAt("");
     setEditError(""); setEditing(true); setExpanded(true);
   }
 
   function handleSave() {
     setEditError("");
-    saveEdit({
+    const payload: EditPayload = {
       language: eLang || null,
       time_complexity: eTimeC || null,
       space_complexity: eSpaceC || null,
       confidence: eConf,
       notes: eNotes || null,
       code: eCode || null,
-    });
+    };
+    if (eSolvedAt) payload.solved_at = new Date(eSolvedAt).toISOString();
+    saveEdit(payload);
   }
 
   return (
@@ -1081,9 +1101,21 @@ function SolveAttempt({
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <label className="text-xs font-black text-base-content/40 uppercase tracking-wider shrink-0">Confidence</label>
             <ConfidencePicker value={eConf} onChange={setEConf} />
+            <div className="ml-auto flex items-center gap-2">
+              <label className="text-xs font-black text-base-content/40 uppercase tracking-wider shrink-0">
+                Solved <span className="font-normal normal-case opacity-60">(optional)</span>
+              </label>
+              <input
+                type="date"
+                value={eSolvedAt}
+                max={new Date().toISOString().split("T")[0]}
+                onChange={e => setESolvedAt(e.target.value)}
+                className="border border-base-300 rounded-lg px-3 py-1.5 text-sm font-mono bg-base-100 text-base-content"
+              />
+            </div>
           </div>
 
           <div className="flex flex-col gap-2">
@@ -1275,30 +1307,164 @@ function QuickSolveForm({ problem, token, onSuccess, onCancel }: {
   );
 }
 
+// ── TopicEditor ───────────────────────────────────────────────────────────
+
+function TopicEditor({ problem, token, availableTopics }: {
+  problem: Problem; token: string; availableTopics: string[];
+}) {
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState("");
+  const [focused, setFocused] = useState(false);
+
+  const allSuggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const t of [...LC_TOPICS, ...availableTopics]) {
+      if (!seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); out.push(t); }
+    }
+    return out;
+  }, [availableTopics]);
+
+  const suggestions = useMemo(() => {
+    const added = new Set(problem.topics.map(t => t.toLowerCase()));
+    const q = draft.trim().toLowerCase();
+    return allSuggestions.filter(t =>
+      !added.has(t.toLowerCase()) && (!q || t.toLowerCase().includes(q))
+    );
+  }, [allSuggestions, problem.topics, draft]);
+
+  const { mutate: saveTopics } = useMutation<void, Error, string[]>({
+    mutationFn: async (topics) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/problems/${problem.id}`, token, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topics }),
+      });
+      if (!r.ok) throw new Error("Failed to update topics");
+    },
+    onMutate: async (topics) => {
+      await queryClient.cancelQueries({ queryKey: ["leetcode", "solves"] });
+      const previous = queryClient.getQueryData<Solve[]>(["leetcode", "solves"]);
+      queryClient.setQueryData<Solve[]>(["leetcode", "solves"], (old = []) =>
+        old.map(s => s.problem.leetcode_id === problem.leetcode_id
+          ? { ...s, problem: { ...s.problem, topics } }
+          : s
+        )
+      );
+      return { previous };
+    },
+    onError: (_err, _v, ctx) => {
+      const c = ctx as { previous?: Solve[] } | undefined;
+      if (c?.previous) queryClient.setQueryData(["leetcode", "solves"], c.previous);
+      toast.error("Failed to update topics");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["leetcode"] });
+    },
+  });
+
+  function removeTopic(t: string) {
+    saveTopics(problem.topics.filter(x => x !== t));
+  }
+
+  function selectTopic(t: string) {
+    saveTopics([...problem.topics, t]);
+    setDraft("");
+  }
+
+  function addCustom() {
+    const t = draft.trim();
+    if (!t || problem.topics.map(x => x.toLowerCase()).includes(t.toLowerCase())) {
+      setDraft(""); return;
+    }
+    saveTopics([...problem.topics, t]);
+    setDraft("");
+  }
+
+  const showSuggestions = focused && suggestions.length > 0;
+
+  return (
+    <div className="px-4 py-3 border-b border-base-300/60 bg-base-200/20 flex flex-col gap-2">
+      {/* Current topics */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] font-black text-base-content/30 uppercase tracking-wider shrink-0">Topics</span>
+        {problem.topics.length === 0 && (
+          <span className="text-[10px] text-base-content/25 italic">none</span>
+        )}
+        {problem.topics.map(t => (
+          <span key={t} className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-base-300/60 text-base-content/55 border border-base-300">
+            {t}
+            <button type="button" onClick={() => removeTopic(t)}
+              className="text-base-content/30 hover:text-error transition-colors leading-none ml-0.5">
+              <X size={9} />
+            </button>
+          </span>
+        ))}
+      </div>
+
+      {/* Search / add input */}
+      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-base-100 border border-base-300 w-full">
+        <Search size={11} className="text-base-content/25 shrink-0" />
+        <input
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setTimeout(() => setFocused(false), 120)}
+          onKeyDown={e => {
+            if (e.key === "Enter") { e.preventDefault(); suggestions[0] ? selectTopic(suggestions[0]) : addCustom(); }
+            if (e.key === "Escape") { setFocused(false); setDraft(""); }
+          }}
+          placeholder="Search or add a topic…"
+          className="flex-1 text-xs font-semibold bg-transparent outline-none text-base-content/60 placeholder:text-base-content/20 min-w-0"
+        />
+        {draft.trim() && (
+          <button type="button" onMouseDown={e => { e.preventDefault(); addCustom(); }}
+            className="text-[10px] font-black text-base-content/40 hover:text-base-content/70 transition-colors shrink-0 flex items-center gap-0.5">
+            <Plus size={10} /> Add
+          </button>
+        )}
+      </div>
+
+      {/* Inline suggestions */}
+      {showSuggestions && (
+        <div className="flex flex-wrap gap-1.5">
+          {suggestions.slice(0, 30).map(t => (
+            <button
+              key={t}
+              type="button"
+              onMouseDown={e => { e.preventDefault(); selectTopic(t); }}
+              className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-base-100 border border-base-300 text-base-content/50 hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-colors"
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── SolveGroupCard ─────────────────────────────────────────────────────────
 
 function SolveGroupCard({
-  group, token, onUpdated,
+  group, token, onUpdated, availableTopics,
 }: {
-  group: SolveGroup; token: string; onUpdated: () => void;
+  group: SolveGroup; token: string; onUpdated: () => void; availableTopics: string[];
 }) {
   const [expanded,      setExpanded]      = useState(false);
   const [addingResolve, setAddingResolve] = useState(false);
 
-  const diff            = group.problem.difficulty.toLowerCase();
-  const xp              = DIFF_XP[diff] ?? 20;
-  const mostRecent      = group.solves[group.solves.length - 1];
-  const solveCount      = group.solves.length;
-  const confSolve       = [...group.solves].reverse().find(s => s.confidence != null);
-  const latestConf      = confSolve?.confidence != null ? CONFIDENCE_LABELS[confSolve.confidence] : null;
-  const usedLangs       = [...new Set(group.solves.map(s => s.language).filter(Boolean) as string[])];
-  const isImported      = group.solves.every(s => s.is_imported);
+  const confSolve        = [...group.solves].reverse().find(s => s.confidence != null);
+  const latestConf       = confSolve?.confidence != null ? CONFIDENCE_LABELS[confSolve.confidence] : null;
+  const isImported       = group.solves.every(s => s.is_imported);
+  const lastNonImported  = [...group.solves].reverse().find(s => !s.is_imported);
 
   return (
     <div
       className="rounded-2xl bg-base-100 border-2 border-base-300 overflow-hidden"
       style={{ boxShadow: "0 4px 0 rgba(0,0,0,0.08)" }}
     >
+      {/* Single row */}
       <div className="flex items-center gap-3 px-4 py-3.5">
         <button onClick={() => setExpanded(v => !v)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
           <span className="font-mono text-xs text-base-content/30 shrink-0 w-10">{group.problem.leetcode_id}.</span>
@@ -1314,58 +1480,30 @@ function SolveGroupCard({
         >
           <ExternalLink size={13} />
         </a>
-
         <DiffBadge difficulty={group.problem.difficulty} />
-
-        {isImported && (
+        {latestConf && (
+          <span className="text-[10px] font-black px-2 py-0.5 rounded-full shrink-0"
+            style={{ color: latestConf.color, backgroundColor: `${latestConf.color}20` }}>
+            {latestConf.label}
+          </span>
+        )}
+        {isImported ? (
           <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-base-300 text-base-content/40 shrink-0">
             imported
           </span>
-        )}
-
-        {usedLangs.length > 0 && (
-          <div className="hidden sm:flex items-center gap-1 shrink-0">
-            {usedLangs.map(lang => (
-              <span key={lang} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                style={{ color: langColor(lang), backgroundColor: `${langColor(lang)}20`, border: `1px solid ${langColor(lang)}44` }}>
-                {lang}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {latestConf && (
-          <span className="hidden sm:block text-[10px] font-black px-2 py-0.5 rounded-full shrink-0"
-            style={{ color: latestConf.color, backgroundColor: `${latestConf.color}20` }}>
-            {confSolve!.confidence} — {latestConf.label}
+        ) : lastNonImported ? (
+          <span className="text-[10px] font-semibold text-base-content/35 shrink-0">
+            {timeAgo(lastNonImported.solved_at)}
           </span>
-        )}
-
-        {!isImported && (
-          <span className="font-black text-xs shrink-0" style={{ color: "var(--game-accent)" }}>+{xp} XP</span>
-        )}
-
-        {solveCount > 1 && (
-          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-base-300 text-base-content/50 shrink-0">
-            {solveCount}×
-          </span>
-        )}
-
+        ) : null}
         <button onClick={() => setExpanded(v => !v)} className="shrink-0 text-base-content/30">
           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
       </div>
 
-      {group.problem.topics.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 px-4 pb-3">
-          {group.problem.topics.map(t => (
-            <span key={t} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-base-200 text-base-content/45">{t}</span>
-          ))}
-        </div>
-      )}
-
       {expanded && (
         <div className="border-t border-base-300">
+          <TopicEditor problem={group.problem} token={token} availableTopics={availableTopics} />
           {group.solves.map((solve, idx) => (
             <SolveAttempt key={solve.id} solve={solve} attemptNumber={idx + 1} token={token} onUpdated={onUpdated} />
           ))}
@@ -1489,6 +1627,33 @@ export default function LeetCodePage() {
     modalRef.current?.close();
   }
 
+  function exportSolves() {
+    const data = groups.map(g => ({
+      leetcode_id: g.problem.leetcode_id,
+      title: g.problem.title,
+      slug: g.problem.slug,
+      difficulty: g.problem.difficulty,
+      topics: g.problem.topics,
+      solves: g.solves.map(s => ({
+        language: s.language,
+        time_complexity: s.time_complexity,
+        space_complexity: s.space_complexity,
+        confidence: s.confidence,
+        notes: s.notes,
+        code: s.code,
+        solved_at: s.solved_at,
+        is_imported: s.is_imported,
+      })),
+    }));
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `shepherd-leetcode-${new Date().toISOString().split("T")[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const activeRuleCount = useMemo(() => countRules(queryGroup), [queryGroup]);
   const filtersActive   = globalFilter !== "" || queryGroup.rules.length > 0;
   const visibleCount    = filteredGroups.length;
@@ -1519,12 +1684,24 @@ export default function LeetCodePage() {
           </div>
           <h2 className="text-xl font-black text-base-content">Leetcode</h2>
         </div>
-        <button onClick={() => modalRef.current?.showModal()}
-          className="btn btn-sm gap-2 font-black text-white border-none"
-          style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}>
-          <Plus size={14} />
-          Log Solve
-        </button>
+        <div className="flex items-center gap-2">
+          {groups.length > 0 && (
+            <button
+              onClick={exportSolves}
+              className="btn btn-sm btn-ghost gap-1.5 font-bold text-base-content/50 border border-base-300"
+              title="Export all solves as JSON"
+            >
+              <Download size={13} />
+              Export
+            </button>
+          )}
+          <button onClick={() => modalRef.current?.showModal()}
+            className="btn btn-sm gap-2 font-black text-white border-none"
+            style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}>
+            <Plus size={14} />
+            Log Solve
+          </button>
+        </div>
       </div>
 
       {/* Stats bar */}
@@ -1683,6 +1860,7 @@ export default function LeetCodePage() {
               group={row.original}
               token={token!}
               onUpdated={() => queryClient.invalidateQueries({ queryKey: ["leetcode"] })}
+              availableTopics={availableTopics}
             />
           ))
         )}
