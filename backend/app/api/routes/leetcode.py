@@ -7,11 +7,11 @@ from app.core.security import get_current_user
 from app.core.database import get_db
 from app.models.leetcode import LeetCodeSolve, LeetCodeProblem
 from app.models.user import User
-from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveOut, LCImportRequest, LeetCodeProblemUpdate, LeetCodeProblemOut
+from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveOut, LCImportRequest, LeetCodeProblemUpdate, LeetCodeProblemOut, LCJsonImportRequest, LCJsonImportResult
 from app.services.cache import cache_delete
 from app.services.sse_service import connect, disconnect, push
 from app.schemas.leetcode import LeetCodeSolveUpdate
-from app.services.leetcode_service import update_solve, delete_solve, get_stats, log_solve, get_solve, search_problems, import_historical_solves, validate_leetcode_username
+from app.services.leetcode_service import update_solve, delete_solve, get_stats, log_solve, get_solve, search_problems, import_historical_solves, import_solves_from_json, validate_leetcode_username
 from app.services.goal_service import increment_leetcode_goals
 from app.schemas.goal import GoalOut
 from app.models.xp_event import XPSource
@@ -60,6 +60,19 @@ async def import_lc_solves(
     except Exception:
         await db.rollback()
         raise HTTPException(status_code=502, detail="LeetCode import failed. Please try again.")
+
+
+@router.post("/import-json", response_model=LCJsonImportResult)
+async def import_lc_json(
+    payload: LCJsonImportRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore solves from a previously exported Shepherd JSON backup."""
+    imported, updated = await import_solves_from_json(db, user, payload.problems)
+    await db.commit()
+    await cache_delete(f"user:me:{user.id}")
+    return {"imported": imported, "updated": updated}
 
 
 @router.get("/search")

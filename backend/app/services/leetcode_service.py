@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.leetcode import LeetCodeProblem, LeetCodeSolve
 from app.models.streak import StreakType
 from app.models.user import User
-from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveUpdate
+from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveUpdate, LCJsonImportProblem
 from app.services.xp_service import award_xp, XPSource
 from app.services.streak_service import update_streak
 from app.services.cache import cache_set, cache_get
@@ -422,6 +422,111 @@ async def import_historical_solves(
 
     await db.flush()
     return imported
+
+
+async def import_solves_from_json(
+    db: AsyncSession,
+    user: User,
+    problems: list[LCJsonImportProblem],
+) -> tuple[int, int]:
+    """
+    Restore solves from a previously exported Shepherd JSON backup.
+    Additive: new problems/solves are inserted, and matching existing
+    problems/solves are updated in place. Each solve keeps the
+    `is_imported` flag it had at export time.
+
+    Returns (imported, updated) counts.
+    """
+    slugs = [p.slug for p in problems if p.slug]
+
+    problems_by_slug: dict[str, LeetCodeProblem] = {}
+    if slugs:
+        res = await db.execute(select(LeetCodeProblem).where(LeetCodeProblem.slug.in_(slugs)))
+        problems_by_slug = {p.slug: p for p in res.scalars().all()}
+
+    new_problems: list[tuple[str, LeetCodeProblem]] = []
+    seen_slugs: set[str] = set()
+    for item in problems:
+        if not item.slug or item.slug in seen_slugs:
+            continue
+        seen_slugs.add(item.slug)
+        existing_problem = problems_by_slug.get(item.slug)
+        if existing_problem:
+            existing_problem.title = item.title
+            existing_problem.difficulty = item.difficulty
+            if item.topics:
+                existing_problem.topics = item.topics
+        else:
+            p = LeetCodeProblem(
+                leetcode_id=item.leetcode_id,
+                title=item.title,
+                slug=item.slug,
+                difficulty=item.difficulty,
+                topics=item.topics,
+            )
+            db.add(p)
+            new_problems.append((item.slug, p))
+
+    if new_problems:
+        await db.flush()
+        for slug, p in new_problems:
+            problems_by_slug[slug] = p
+
+    problem_ids = {p.id for p in problems_by_slug.values()}
+    existing_solves: dict[tuple[int, datetime], LeetCodeSolve] = {}
+    if problem_ids:
+        res2 = await db.execute(
+            select(LeetCodeSolve).where(
+                LeetCodeSolve.user_id == user.id,
+                LeetCodeSolve.problem_id.in_(problem_ids),
+            )
+        )
+        for s in res2.scalars().all():
+            solved_at = s.solved_at
+            if solved_at.tzinfo is None:
+                solved_at = solved_at.replace(tzinfo=timezone.utc)
+            existing_solves[(s.problem_id, solved_at)] = s
+
+    imported = 0
+    updated = 0
+    for item in problems:
+        problem = problems_by_slug.get(item.slug)
+        if not problem:
+            continue
+        for solve in item.solves:
+            solved_at = solve.solved_at
+            if solved_at.tzinfo is None:
+                solved_at = solved_at.replace(tzinfo=timezone.utc)
+            key = (problem.id, solved_at)
+            existing_solve = existing_solves.get(key)
+            if existing_solve:
+                existing_solve.notes = solve.notes
+                existing_solve.code = solve.code
+                existing_solve.language = solve.language
+                existing_solve.time_complexity = solve.time_complexity
+                existing_solve.space_complexity = solve.space_complexity
+                existing_solve.confidence = solve.confidence
+                existing_solve.is_imported = solve.is_imported
+                updated += 1
+            else:
+                new_solve = LeetCodeSolve(
+                    user_id=user.id,
+                    problem_id=problem.id,
+                    notes=solve.notes,
+                    code=solve.code,
+                    language=solve.language,
+                    time_complexity=solve.time_complexity,
+                    space_complexity=solve.space_complexity,
+                    confidence=solve.confidence,
+                    solved_at=solved_at,
+                    is_imported=solve.is_imported,
+                )
+                db.add(new_solve)
+                existing_solves[key] = new_solve
+                imported += 1
+
+    await db.flush()
+    return imported, updated
 
 
 _RECENT_AC_QUERY = """

@@ -26,7 +26,7 @@ import {
 } from "@tanstack/react-table";
 import {
   Code2, Search, Plus, ChevronDown, ChevronUp,
-  X, Check, Loader2, Pencil, ArrowUp, ArrowDown, SlidersHorizontal, Trash2, ExternalLink, Download,
+  X, Check, Loader2, Pencil, ArrowUp, ArrowDown, SlidersHorizontal, Trash2, ExternalLink, Download, Upload,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -1537,6 +1537,7 @@ export default function LeetCodePage() {
   const { token }   = useAuth();
   const queryClient = useQueryClient();
   const modalRef    = useRef<HTMLDialogElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Filter / sort / pagination state
   const [globalFilter, setGlobalFilter] = useState("");
@@ -1654,6 +1655,38 @@ export default function LeetCodePage() {
     URL.revokeObjectURL(url);
   }
 
+  const { mutate: importSolves, isPending: importing } = useMutation<
+    { imported: number; updated: number }, Error, File
+  >({
+    mutationFn: async (file) => {
+      let data: unknown;
+      try {
+        data = JSON.parse(await file.text());
+      } catch {
+        throw new Error("That file isn't valid JSON");
+      }
+      if (!Array.isArray(data)) throw new Error("Unrecognized export format");
+      const r = await authFetch(`${API_URL}/api/leetcode/import-json`, token!, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ problems: data }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail ?? "Import failed");
+      return r.json();
+    },
+    onSuccess: ({ imported, updated }) => {
+      queryClient.invalidateQueries({ queryKey: ["leetcode"] });
+      toast.success(`Imported ${imported} new solve${imported === 1 ? "" : "s"}, updated ${updated}`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) importSolves(file);
+    e.target.value = "";
+  }
+
   const activeRuleCount = useMemo(() => countRules(queryGroup), [queryGroup]);
   const filtersActive   = globalFilter !== "" || queryGroup.rules.length > 0;
   const visibleCount    = filteredGroups.length;
@@ -1685,6 +1718,22 @@ export default function LeetCodePage() {
           <h2 className="text-xl font-black text-base-content">Leetcode</h2>
         </div>
         <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json"
+            onChange={handleImportFile}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+            className="btn btn-sm btn-ghost gap-1.5 font-bold text-base-content/50 border border-base-300"
+            title="Import solves from a JSON export"
+          >
+            {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+            Import
+          </button>
           {groups.length > 0 && (
             <button
               onClick={exportSolves}

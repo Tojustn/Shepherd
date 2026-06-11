@@ -48,6 +48,35 @@ class LCImportRequest(BaseModel):
     session_cookie: str | None = None
 
 
+class LCJsonImportSolve(BaseModel):
+    language: str | None = None
+    time_complexity: str | None = None
+    space_complexity: str | None = None
+    confidence: int | None = None
+    notes: str | None = None
+    code: str | None = None
+    solved_at: datetime
+    is_imported: bool = False
+
+
+class LCJsonImportProblem(BaseModel):
+    leetcode_id: int
+    title: str
+    slug: str
+    difficulty: str
+    topics: list[str] = []
+    solves: list[LCJsonImportSolve] = []
+
+
+class LCJsonImportRequest(BaseModel):
+    problems: list[LCJsonImportProblem]
+
+
+class LCJsonImportResult(BaseModel):
+    imported: int
+    updated: int
+
+
 class LeetCodeProblemUpdate(BaseModel):
     topics: list[str]
 
