@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import NoteEditor from "@/components/NoteEditor";
 import SyntaxHighlighter from "react-syntax-highlighter";
 import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { atomOneLight } from "react-syntax-highlighter/dist/esm/styles/hljs";
@@ -869,7 +872,7 @@ function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => vo
 
           <div className="flex flex-col gap-1">
             <label className="text-xs font-black text-base-content/40">Notes <span className="font-normal opacity-60">(optional)</span></label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Key insight, approach, edge cases…" className="textarea textarea-bordered text-sm resize-y h-20 w-full" />
+            <NoteEditor value={notes} onChange={setNotes} minRows={4} />
           </div>
 
           <div className="flex flex-col gap-1">
@@ -925,8 +928,8 @@ function SolveAttempt({
   const [eSpaceC,    setESpaceC]    = useState(solve.space_complexity  ?? "");
   const [eConf,      setEConf]      = useState<number | null>(solve.confidence ?? null);
   const [eNotes,     setENotes]     = useState(solve.notes ?? "");
-  const [eCode,      setECode]      = useState(solve.code  ?? "");
-  const [eSolvedAt,  setESolvedAt]  = useState("");
+  const [eCode,         setECode]         = useState(solve.code  ?? "");
+  const [eSolvedAt,     setESolvedAt]     = useState("");
 
   const isFirst    = attemptNumber === 1;
   const label      = isFirst ? "Initial Solve" : `Re-solve #${attemptNumber}`;
@@ -1120,7 +1123,7 @@ function SolveAttempt({
 
           <div className="flex flex-col gap-2">
             <label className="text-xs font-black text-base-content/40 uppercase tracking-wider">Notes</label>
-            <textarea value={eNotes} onChange={e => setENotes(e.target.value)} placeholder="Key insight, approach, edge cases…" className="textarea textarea-bordered text-sm resize-y w-full" rows={6} />
+            <NoteEditor value={eNotes} onChange={setENotes} minRows={6} />
           </div>
 
           <div className="flex flex-col gap-2">
@@ -1177,7 +1180,9 @@ function SolveAttempt({
           {solve.notes && (
             <div>
               <p className="text-[10px] font-black text-base-content/30 mb-1">NOTES</p>
-              <p className="text-xs text-base-content/70 leading-relaxed whitespace-pre-wrap">{solve.notes}</p>
+              <div className="markdown-notes">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{solve.notes}</ReactMarkdown>
+              </div>
             </div>
           )}
           {solve.code && (
@@ -1206,12 +1211,12 @@ function QuickSolveForm({ problem, token, onSuccess, onCancel }: {
 }) {
   const { theme }    = useTheme();
   const queryClient  = useQueryClient();
-  const [language,   setLanguage]   = useState("Python");
-  const [timeC,      setTimeC]      = useState("");
-  const [spaceC,     setSpaceC]     = useState("");
+  const [language,      setLanguage]      = useState("Python");
+  const [timeC,         setTimeC]         = useState("");
+  const [spaceC,        setSpaceC]        = useState("");
   const [notes,      setNotes]      = useState("");
-  const [code,       setCode]       = useState("");
-  const [confidence, setConfidence] = useState<number | null>(null);
+  const [code,          setCode]          = useState("");
+  const [confidence,    setConfidence]    = useState<number | null>(null);
 
   const { mutate: submit, isPending: submitting, error } = useMutation<Solve, Error, void>({
     mutationFn: async () => {
@@ -1275,7 +1280,7 @@ function QuickSolveForm({ problem, token, onSuccess, onCancel }: {
 
       <div className="flex flex-col gap-1">
         <label className="text-xs font-black text-base-content/40">Notes <span className="font-normal opacity-60">(optional)</span></label>
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Key insight, approach, edge cases…" className="textarea textarea-bordered text-sm resize-y h-20 w-full" />
+        <NoteEditor value={notes} onChange={setNotes} minRows={4} />
       </div>
 
       <div className="flex flex-col gap-1">
@@ -1537,6 +1542,7 @@ export default function LeetCodePage() {
   const { token }   = useAuth();
   const queryClient = useQueryClient();
   const modalRef    = useRef<HTMLDialogElement>(null);
+  const clearModalRef = useRef<HTMLDialogElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Filter / sort / pagination state
@@ -1687,6 +1693,19 @@ export default function LeetCodePage() {
     e.target.value = "";
   }
 
+  const { mutate: clearAllSolves, isPending: clearing } = useMutation<void, Error>({
+    mutationFn: async () => {
+      const r = await authFetch(`${API_URL}/api/leetcode/solves`, token!, { method: "DELETE" });
+      if (!r.ok && r.status !== 204) throw new Error((await r.json()).detail ?? "Failed to clear solves");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["leetcode"] });
+      toast.success("All solves cleared");
+      clearModalRef.current?.close();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const activeRuleCount = useMemo(() => countRules(queryGroup), [queryGroup]);
   const filtersActive   = globalFilter !== "" || queryGroup.rules.length > 0;
   const visibleCount    = filteredGroups.length;
@@ -1744,6 +1763,16 @@ export default function LeetCodePage() {
               Export
             </button>
           )}
+          {groups.length > 0 && (
+            <button
+              onClick={() => clearModalRef.current?.showModal()}
+              className="btn btn-sm btn-ghost gap-1.5 font-bold text-base-content/50 hover:text-error border border-base-300"
+              title="Delete all logged solves"
+            >
+              <Trash2 size={13} />
+              Clear
+            </button>
+          )}
           <button onClick={() => modalRef.current?.showModal()}
             className="btn btn-sm gap-2 font-black text-white border-none"
             style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}>
@@ -1785,6 +1814,33 @@ export default function LeetCodePage() {
           </div>
           <div className="overflow-y-auto min-h-0 flex-1 px-6 pb-6">
             {token && <LogSolveForm token={token} onSuccess={handleSuccess} />}
+          </div>
+        </div>
+        <form method="dialog" className="modal-backdrop">
+          <button>close</button>
+        </form>
+      </dialog>
+
+      {/* Clear Solves confirm modal */}
+      <dialog ref={clearModalRef} className="modal">
+        <div className="modal-box max-w-md">
+          <p className="font-black text-sm text-base-content mb-2">Clear all solves?</p>
+          <p className="text-sm text-base-content/60 mb-6">
+            This will permanently delete all {total} logged solve{total === 1 ? "" : "s"} across {groups.length} problem{groups.length === 1 ? "" : "s"}. This cannot be undone.
+          </p>
+          <div className="flex gap-3 justify-end">
+            <button type="button" onClick={() => clearModalRef.current?.close()} className="btn btn-ghost font-black">
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => clearAllSolves()}
+              disabled={clearing}
+              className="btn btn-error font-black gap-2 text-white"
+            >
+              {clearing ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+              {clearing ? "Clearing…" : "Delete All"}
+            </button>
           </div>
         </div>
         <form method="dialog" className="modal-backdrop">

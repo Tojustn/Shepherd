@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @plugin "daisyui";
+@plugin "@tailwindcss/typography";
 
 :root {
   --game-accent: #4f7cf5;
@@ -46,4 +47,42 @@
 
 .modal-box {
   max-height: 75vh !important;
+}
+
+/* TipTap note editor */
+.note-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: oklch(var(--bc) / 0.35);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+.note-editor .tiptap { @apply text-sm; }
+.note-editor .tiptap p { @apply my-1; }
+.note-editor .tiptap h1 { @apply text-base font-bold mt-3 mb-1; }
+.note-editor .tiptap h2 { @apply text-sm font-bold mt-2 mb-1; }
+.note-editor .tiptap h3 { @apply text-sm font-semibold mt-2 mb-0.5; }
+.note-editor .tiptap ul { @apply list-disc pl-5 my-1 space-y-0.5; }
+.note-editor .tiptap ol { @apply list-decimal pl-5 my-1 space-y-0.5; }
+.note-editor .tiptap li { @apply text-sm; }
+.note-editor .tiptap strong { @apply font-semibold; }
+.note-editor .tiptap em { @apply italic; }
+.note-editor .tiptap code { @apply font-mono text-[11px] bg-base-300 px-1 py-0.5 rounded; }
+.note-editor .tiptap pre { @apply bg-base-300 rounded-lg p-3 my-2; }
+.note-editor .tiptap pre code { @apply bg-transparent p-0; }
+.note-editor .tiptap blockquote { @apply border-l-2 border-base-300 pl-3 text-base-content/60 italic my-2; }
+.note-editor .tiptap hr { @apply border-base-300 my-3; }
+
+.markdown-notes {
+  @apply prose prose-sm max-w-none text-base-content/70;
+  & > *:first-child { margin-top: 0; }
+  & > *:last-child  { margin-bottom: 0; }
+  & p, & li        { font-size: 0.75rem; }
+  & h1, & h2       { font-size: 0.875rem; }
+  & h3             { font-size: 0.75rem; }
+  & code           { font-size: 11px; background: oklch(var(--b3)); padding: 0.1em 0.3em; border-radius: 0.25rem; }
+  & pre            { background: oklch(var(--b3)); border-radius: 0.5rem; padding: 0.75rem; }
+  & pre code       { background: transparent; padding: 0; }
+  & a              { color: oklch(var(--p)); }
+  & strong         { color: oklch(var(--bc) / 0.9); }
 }
