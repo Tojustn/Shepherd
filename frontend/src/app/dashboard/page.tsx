@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/auth";
+import { ROUTES } from "@/lib/routes";
 import { useXPContext } from "@/context/xp";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { XPBar } from "@/components/XPBar";
@@ -180,7 +181,7 @@ export default function Dashboard() {
             label="Goals"
             right={
               <Link
-                href="/dashboard/goals"
+                href={ROUTES.dashboard.goals}
                 className="flex items-center gap-1 text-sm font-bold text-base-content/40 hover:text-base-content transition-colors"
               >
                 View all <ArrowRight size={14} />
@@ -233,7 +234,7 @@ export default function Dashboard() {
           label="Recent Leetcode"
           right={
             <Link
-              href="/dashboard/leetcode"
+              href={ROUTES.dashboard.leetcode}
               className="flex items-center gap-1 text-sm font-bold text-base-content/40 hover:text-base-content transition-colors"
             >
               View all <ArrowRight size={14} />

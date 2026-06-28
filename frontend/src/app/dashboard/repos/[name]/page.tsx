@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/context/auth";
+import { ROUTES } from "@/lib/routes";
 import {
   ReactFlow,
   Background,
@@ -499,7 +500,7 @@ export default function RepoDetailPage() {
 
       {/* Header */}
       <div className="absolute top-0 inset-x-0 z-20 flex items-center gap-3 px-5 py-3.5 bg-base-100/90 backdrop-blur border-b border-base-300">
-        <Link href="/dashboard/repos" className="text-base-content/40 hover:text-base-content/70 transition-colors">
+        <Link href={ROUTES.dashboard.repos} className="text-base-content/40 hover:text-base-content/70 transition-colors">
           <ArrowLeft size={18} />
         </Link>
         <div className="flex-1 min-w-0">

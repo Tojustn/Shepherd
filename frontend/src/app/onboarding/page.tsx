@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/auth";
+import { ROUTES, onboardingStep } from "@/lib/routes";
 import { StepDots } from "@/components/onboarding/StepDots";
 import { WelcomeStep } from "@/components/onboarding/steps/WelcomeStep";
 import { GitHubStep } from "@/components/onboarding/steps/GitHubStep";
@@ -18,7 +19,7 @@ function OnboardingInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const step = Number(searchParams.get("step") ?? "0");
-  const setStep = (n: number) => router.push(`/onboarding?step=${n}`);
+  const setStep = (n: number) => router.push(onboardingStep(n));
   const [username, setUsername] = useState("");
   const [appInstalled, setAppInstalled] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -32,15 +33,15 @@ function OnboardingInner() {
   const webhookUrl = `${API_URL}/api/webhooks/github`;
 
   useEffect(() => {
-    if (!token) { router.replace("/"); return; }
+    if (!token) { router.replace(ROUTES.home); return; }
     fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((u) => {
-        if (u.onboarding_complete) { router.replace("/dashboard"); return; }
+        if (u.onboarding_complete) { router.replace(ROUTES.dashboard.root); return; }
         setUsername(u.username ?? "");
         if (u.leetcode_username) { setLcUsername(u.leetcode_username); setLcStatus("valid"); }
       })
-      .catch(() => router.replace("/"));
+      .catch(() => router.replace(ROUTES.home));
   }, [token, router]);
 
   useEffect(() => {
@@ -96,7 +97,7 @@ function OnboardingInner() {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     });
-    router.replace("/dashboard");
+    router.replace(ROUTES.dashboard.root);
   }
 
   return (

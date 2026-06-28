@@ -5,13 +5,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { LayoutDashboard, GitBranch, Target, LogOut, Sun, Moon, Code2, User } from "lucide-react";
 import { useAuth } from "@/context/auth";
 import { useTheme } from "@/context/theme";
+import { ROUTES } from "@/lib/routes";
 
 const NAV_ITEMS = [
-  { label: "Dashboard", href: "/dashboard",          icon: LayoutDashboard },
-  { label: "Repos",     href: "/dashboard/repos",    icon: GitBranch },
-  { label: "Goals",     href: "/dashboard/goals",    icon: Target },
-  { label: "Leetcode",  href: "/dashboard/leetcode", icon: Code2 },
-  { label: "Profile",   href: "/dashboard/profile",  icon: User },
+  { label: "Dashboard", href: ROUTES.dashboard.root,     icon: LayoutDashboard },
+  { label: "Repos",     href: ROUTES.dashboard.repos,    icon: GitBranch },
+  { label: "Goals",     href: ROUTES.dashboard.goals,    icon: Target },
+  { label: "Leetcode",  href: ROUTES.dashboard.leetcode, icon: Code2 },
+  { label: "Profile",   href: ROUTES.dashboard.profile,  icon: User },
 ];
 
 export function AppSidebar() {
@@ -22,7 +23,7 @@ export function AppSidebar() {
 
   function handleLogout() {
     logout();
-    router.replace("/");
+    router.replace(ROUTES.home);
   }
 
   return (

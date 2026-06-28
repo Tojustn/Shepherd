@@ -45,6 +45,24 @@
   animation: xp-float 2.8s ease-out forwards;
 }
 
+/* Orchestrated list reveal — staggered rise-in on load */
+@keyframes card-rise {
+  0%   { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.card-rise {
+  opacity: 0;
+  animation: card-rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Atmospheric panel — subtle accent-tinted depth instead of a flat fill */
+.atmos-accent {
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--game-accent) 10%, transparent) 0%, transparent 55%),
+    radial-gradient(120% 140% at 100% 100%, color-mix(in srgb, var(--game-accent) 7%, transparent) 0%, transparent 50%),
+    var(--color-base-100, oklch(var(--b1)));
+}
+
 .modal-box {
   max-height: 75vh !important;
 }
@@ -74,7 +92,6 @@
 .note-editor .tiptap hr { @apply border-base-300 my-3; }
 
 .markdown-notes {
-  @apply prose prose-sm max-w-none text-base-content/70;
   & > *:first-child { margin-top: 0; }
   & > *:last-child  { margin-bottom: 0; }
   & p, & li        { font-size: 0.75rem; }

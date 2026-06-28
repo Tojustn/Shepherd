@@ -28,7 +28,7 @@ async def db():
 
 @pytest_asyncio.fixture(scope="function")
 async def user(db: AsyncSession) -> User:
-    u = User(github_id="test123", username="testuser", xp=0, level=1, pending_level_up=False)
+    u = User(github_id="test123", github_login="testuser", username="testuser", xp=0, level=1, pending_level_up=False)
     db.add(u)
     await db.commit()
     await db.refresh(u)

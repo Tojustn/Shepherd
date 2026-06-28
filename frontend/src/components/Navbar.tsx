@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/context/theme";
 import { useAuth } from "@/context/auth";
+import { ROUTES } from "@/lib/routes";
 
 export function Navbar() {
   const { theme, toggleTheme } = useTheme();
@@ -14,12 +15,12 @@ export function Navbar() {
 
   function handleLogout() {
     logout();
-    router.replace("/");
+    router.replace(ROUTES.home);
   }
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-4 border-b border-base-200 bg-base-100/80 backdrop-blur-sm">
-      <Link href="/">
+      <Link href={ROUTES.home}>
         <Image
           src={theme === "light" ? "/black-logo.svg" : "/white-logo.svg"}
           alt="Shepherd"

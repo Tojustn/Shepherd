@@ -26,6 +26,7 @@ class LeetCodeSolveCreate(BaseModel):
     time_complexity: str | None = None
     space_complexity: str | None = None
     confidence: int | None = None
+    from_review: bool = False  # logged via the review queue (enables graduation/archive)
 
 
 class LeetCodeSolveOut(BaseModel):
@@ -89,6 +90,17 @@ class LeetCodeSolveUpdate(BaseModel):
     space_complexity: str | None = None
     confidence: int | None = None
     solved_at: datetime | None = None
+
+
+class ReviewDueItem(BaseModel):
+    problem: LeetCodeProblemOut
+    box: int
+    next_review_at: datetime
+    last_solve: LeetCodeSolveOut | None = None
+    solve_count: int
+    imported_only: bool = False
+
+    model_config = {"from_attributes": True}
 
 
 class TopicStat(BaseModel):

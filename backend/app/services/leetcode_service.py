@@ -1,19 +1,260 @@
 # app/services/leetcode.py
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.leetcode import LeetCodeProblem, LeetCodeSolve
+from app.models.leetcode import LeetCodeProblem, LeetCodeSolve, LeetCodeReview
 from app.models.streak import StreakType
 from app.models.user import User
 from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveUpdate, LCJsonImportProblem
 from app.services.xp_service import award_xp, XPSource
 from app.services.streak_service import update_streak
 from app.services.cache import cache_set, cache_get
+
+
+# ── Leitner spaced-repetition scheduler ────────────────────────────────────
+# Box (1-5) → days until the next review. A passing re-solve promotes one box;
+# a failing one drops straight back to box 1.
+BOX_INTERVALS: dict[int, int] = {1: 1, 2: 3, 3: 7, 4: 21, 5: 60}
+MAX_BOX = 5
+PASS_CONFIDENCE = 3  # confidence >= this is a "pass"
+
+
+def _pass_increment(confidence: int | None, from_review: bool) -> int:
+    """
+    Boxes to advance on a passing solve. A flawless 'Mastered' (5) during a
+    review fast-tracks +2 — no point reviewing normally when it's fully locked in.
+    Everything else advances one box.
+    """
+    return 2 if (from_review and confidence is not None and confidence >= 5) else 1
+
+
+def next_box(current_box: int | None, confidence: int | None, from_review: bool = False) -> int:
+    """
+    Compute the resulting Leitner box after a solve.
+
+    - fail (confidence <= 2): drop back to box 1
+    - pass (confidence 3-4): promote one box (capped at MAX_BOX)
+    - mastered in review (confidence 5): fast-track two boxes (capped)
+    - unknown (no confidence): keep the current box, floored at 1
+    """
+    base = current_box or 0
+    if confidence is None:
+        return max(base, 1)
+    if confidence < PASS_CONFIDENCE:
+        return 1
+    return min(base + _pass_increment(confidence, from_review), MAX_BOX)
+
+
+def _is_pass(confidence: int | None) -> bool:
+    return confidence is not None and confidence >= PASS_CONFIDENCE
+
+
+async def schedule_review(
+    db: AsyncSession,
+    user: User,
+    problem_id: int,
+    confidence: int | None,
+    *,
+    reviewed_at: datetime | None = None,
+    from_review: bool = False,
+) -> LeetCodeReview:
+    """
+    Create or update the Leitner review row for a (user, problem) after a solve.
+
+    Graduation: when `from_review` and the problem is passed again while already
+    in the top box, it's archived (removed from the active queue). Any other solve
+    reactivates it, so a re-solve months later pulls it back into rotation.
+    """
+    reviewed_at = reviewed_at or datetime.now(tz=timezone.utc)
+    result = await db.execute(
+        select(LeetCodeReview).where(
+            LeetCodeReview.user_id == user.id,
+            LeetCodeReview.problem_id == problem_id,
+        )
+    )
+    review = result.scalar_one_or_none()
+
+    prev_box = review.box if review else None
+    box = next_box(prev_box, confidence, from_review=from_review)
+    next_review_at = reviewed_at + timedelta(days=BOX_INTERVALS[box])
+
+    # Graduate when a deliberate review pass would advance past the top box —
+    # covers a normal pass at box 5 and a +2 fast-track from box 4 or 5.
+    graduate = (
+        from_review
+        and _is_pass(confidence)
+        and (prev_box or 0) + _pass_increment(confidence, from_review) > MAX_BOX
+    )
+
+    if review:
+        review.box = box
+        review.next_review_at = next_review_at
+        review.last_reviewed_at = reviewed_at
+        review.archived = graduate
+    else:
+        review = LeetCodeReview(
+            user_id=user.id,
+            problem_id=problem_id,
+            box=box,
+            next_review_at=next_review_at,
+            last_reviewed_at=reviewed_at,
+            archived=graduate,
+        )
+        db.add(review)
+    await db.flush()
+    return review
+
+
+async def seed_missing_reviews(db: AsyncSession, user: User) -> int:
+    """
+    Idempotently create review rows for problems the user has really solved
+    (non-imported) but that have no schedule yet. Mirrors the prod migration's
+    backfill so the queue also works on SQLite dev, where migrations don't run.
+    Each seeded problem starts in box 1, due one day after its last solve.
+    """
+    existing = select(LeetCodeReview.problem_id).where(LeetCodeReview.user_id == user.id)
+    result = await db.execute(
+        select(LeetCodeSolve.problem_id, func.max(LeetCodeSolve.solved_at))
+        .where(
+            LeetCodeSolve.user_id == user.id,
+            LeetCodeSolve.is_imported == False,  # noqa: E712
+            LeetCodeSolve.problem_id.notin_(existing),
+        )
+        .group_by(LeetCodeSolve.problem_id)
+    )
+    created = 0
+    for problem_id, last_solved in result.all():
+        if last_solved is not None and last_solved.tzinfo is None:
+            last_solved = last_solved.replace(tzinfo=timezone.utc)
+        anchor = last_solved or datetime.now(tz=timezone.utc)
+        db.add(LeetCodeReview(
+            user_id=user.id,
+            problem_id=problem_id,
+            box=1,
+            next_review_at=anchor + timedelta(days=1),
+            last_reviewed_at=anchor,
+        ))
+        created += 1
+    if created:
+        await db.flush()
+    return created
+
+
+async def _latest_solve_map(
+    db: AsyncSession, user: User, problem_ids: list[int]
+) -> tuple[dict[int, LeetCodeSolve], dict[int, int]]:
+    """Most-recent solve and solve count per problem, for the given problem ids."""
+    if not problem_ids:
+        return {}, {}
+    result = await db.execute(
+        select(LeetCodeSolve)
+        .where(
+            LeetCodeSolve.user_id == user.id,
+            LeetCodeSolve.problem_id.in_(problem_ids),
+        )
+        .options(selectinload(LeetCodeSolve.problem))
+        .order_by(LeetCodeSolve.solved_at.asc())
+    )
+    latest: dict[int, LeetCodeSolve] = {}
+    counts: dict[int, int] = {}
+    for s in result.scalars().all():
+        latest[s.problem_id] = s  # ascending order → last wins
+        counts[s.problem_id] = counts.get(s.problem_id, 0) + 1
+    return latest, counts
+
+
+async def _get_imported_backlog(db: AsyncSession, user: User) -> list[dict]:
+    """
+    Problems the user has only ever *imported* (no real solve, so no schedule).
+    These have no Leitner state, so they're treated as always-available backlog —
+    oldest first. Reviewing one (logging a real re-solve) converts it into a
+    normally-scheduled problem and drops it from this list.
+    """
+    has_real_solve = select(LeetCodeSolve.problem_id).where(
+        LeetCodeSolve.user_id == user.id,
+        LeetCodeSolve.is_imported == False,  # noqa: E712
+    )
+    already_scheduled = select(LeetCodeReview.problem_id).where(
+        LeetCodeReview.user_id == user.id
+    )
+    result = await db.execute(
+        select(LeetCodeSolve.problem_id, func.max(LeetCodeSolve.solved_at).label("last_at"))
+        .where(
+            LeetCodeSolve.user_id == user.id,
+            LeetCodeSolve.problem_id.notin_(has_real_solve),
+            LeetCodeSolve.problem_id.notin_(already_scheduled),
+        )
+        .group_by(LeetCodeSolve.problem_id)
+        .order_by(func.max(LeetCodeSolve.solved_at).asc())
+    )
+    rows = result.all()
+    if not rows:
+        return []
+
+    now = datetime.now(tz=timezone.utc)
+    latest, counts = await _latest_solve_map(db, user, [r[0] for r in rows])
+    items: list[dict] = []
+    for problem_id, last_at in rows:
+        solve = latest.get(problem_id)
+        if solve is None:
+            continue
+        items.append({
+            "problem": solve.problem,
+            "box": 1,
+            "next_review_at": last_at or now,
+            "last_solve": solve,
+            "solve_count": counts.get(problem_id, 0),
+            "imported_only": True,
+        })
+    return items
+
+
+async def get_due_reviews(
+    db: AsyncSession, user: User, include_imported: bool = False
+) -> list[dict]:
+    """
+    Return problems whose next_review_at has passed, most-overdue first, each
+    paired with its most recent solve (so the UI can reveal the prior solution).
+
+    With include_imported=True, append imported-only problems (which have no
+    schedule of their own) as backlog after the scheduled due items.
+    """
+    await seed_missing_reviews(db, user)
+    now = datetime.now(tz=timezone.utc)
+    result = await db.execute(
+        select(LeetCodeReview)
+        .where(
+            LeetCodeReview.user_id == user.id,
+            LeetCodeReview.archived == False,  # noqa: E712
+            LeetCodeReview.next_review_at <= now,
+        )
+        .options(selectinload(LeetCodeReview.problem))
+        .order_by(LeetCodeReview.next_review_at.asc())
+    )
+    reviews = result.scalars().all()
+
+    latest, counts = await _latest_solve_map(db, user, [r.problem_id for r in reviews])
+    items = [
+        {
+            "problem": r.problem,
+            "box": r.box,
+            "next_review_at": r.next_review_at,
+            "last_solve": latest.get(r.problem_id),
+            "solve_count": counts.get(r.problem_id, 0),
+            "imported_only": False,
+        }
+        for r in reviews
+    ]
+
+    if include_imported:
+        items.extend(await _get_imported_backlog(db, user))
+
+    return items
 
 
 _LC_SEARCH_QUERY = """
@@ -117,28 +358,48 @@ async def log_solve(
         db.add(problem)
         await db.flush()
 
-    count_result = await db.execute(
-        select(func.count()).where(
+    existing_result = await db.execute(
+        select(LeetCodeSolve)
+        .where(
             LeetCodeSolve.user_id == user.id,
             LeetCodeSolve.problem_id == problem.id,
         )
+        .order_by(LeetCodeSolve.solved_at.asc())
     )
-    is_first_solve = count_result.scalar() == 0
+    existing = existing_result.scalars().all()
+    has_real = any(not s.is_imported for s in existing)
+    imported_placeholder = next((s for s in existing if s.is_imported), None)
 
-    solve = LeetCodeSolve(
-        user_id=user.id,
-        problem_id=problem.id,
-        notes=payload.notes,
-        code=payload.code,
-        language=payload.language,
-        time_complexity=payload.time_complexity,
-        space_complexity=payload.space_complexity,
-        confidence=payload.confidence,
-    )
-    db.add(solve)
+    if existing and not has_real and imported_placeholder is not None:
+        # The problem was only ever imported (placeholder, no real solve). Fill that
+        # placeholder in-place instead of stacking a second row on top of it.
+        solve = imported_placeholder
+        solve.notes = payload.notes
+        solve.code = payload.code
+        solve.language = payload.language
+        solve.time_complexity = payload.time_complexity
+        solve.space_complexity = payload.space_complexity
+        solve.confidence = payload.confidence
+        solve.is_imported = False
+        solve.solved_at = datetime.now(tz=timezone.utc)
+        is_first_real = True  # first time it's a real, logged solve
+    else:
+        solve = LeetCodeSolve(
+            user_id=user.id,
+            problem_id=problem.id,
+            notes=payload.notes,
+            code=payload.code,
+            language=payload.language,
+            time_complexity=payload.time_complexity,
+            space_complexity=payload.space_complexity,
+            confidence=payload.confidence,
+        )
+        db.add(solve)
+        is_first_real = len(existing) == 0
+
     await db.flush()
 
-    if is_first_solve:
+    if is_first_real:
         xp_awarded = await award_xp(
             db,
             user,
@@ -148,6 +409,9 @@ async def log_solve(
         await update_streak(db, user, StreakType.LEETCODE)
     else:
         xp_awarded = 0
+
+    # Update the Leitner schedule for this problem.
+    await schedule_review(db, user, problem.id, payload.confidence, from_review=payload.from_review)
 
     result = await db.execute(
         select(LeetCodeSolve)
@@ -198,6 +462,16 @@ async def delete_solve(
         raise ValueError("Solve not found")
 
     await db.delete(solve)
+
+
+async def clear_solves(
+    db: AsyncSession,
+    user: User,
+) -> int:
+    result = await db.execute(
+        delete(LeetCodeSolve).where(LeetCodeSolve.user_id == user.id)
+    )
+    return result.rowcount or 0
 
 
 async def get_stats(

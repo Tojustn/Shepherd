@@ -29,7 +29,8 @@ import {
 } from "@tanstack/react-table";
 import {
   Code2, Search, Plus, ChevronDown, ChevronUp,
-  X, Check, Loader2, Pencil, ArrowUp, ArrowDown, SlidersHorizontal, Trash2, ExternalLink, Download, Upload,
+  X, Check, Loader2, Pencil, ArrowUp, ArrowDown, SlidersHorizontal, Trash2, ExternalLink, Download, Upload, MoreHorizontal,
+  Eye, SkipForward, Sparkles, Brain, HelpCircle, Timer, Zap,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -73,6 +74,15 @@ interface SolveGroup {
   solves: Solve[]; // sorted oldest-first
 }
 
+interface ReviewDueItem {
+  problem: Problem;
+  box: number;
+  next_review_at: string;
+  last_solve: Solve | null;
+  solve_count: number;
+  imported_only: boolean;
+}
+
 // ── Query Builder Types ────────────────────────────────────────────────────
 
 type Field    = "difficulty" | "language" | "confidence" | "topic" | "solveCount" | "imported";
@@ -100,6 +110,61 @@ const DIFF_COLORS: Record<string, { text: string; bg: string; border: string }> 
 };
 
 const DIFF_XP: Record<string, number> = { easy: 20, medium: 40, hard: 80 };
+
+// ── Leitner spaced-repetition (mirrors backend) ─────────────────────────────
+const BOX_DAYS: Record<number, number> = { 1: 1, 2: 3, 3: 7, 4: 21, 5: 60 };
+const MAX_BOX = 5;
+
+// How many reviews to surface per day before suggesting a stop — keeps a large
+// backlog from becoming an unmanageable wall. Soft cap; you can keep going.
+const DAILY_REVIEW_GOAL = 15;
+// At/above this box, review by blueprinting the approach (~3 min) instead of
+// coding from scratch — old problems become a fast warm-up, not a 20-min slog.
+// Box 3 (7-day mark) and up speed-run; boxes 1–2 still code from scratch.
+const SPEEDRUN_BOX = 3;
+
+function reviewDoneKey(): string {
+  return `lc-review-done-${new Date().toISOString().slice(0, 10)}`;
+}
+function getReviewDoneToday(): number {
+  if (typeof window === "undefined") return 0;
+  return Number(localStorage.getItem(reviewDoneKey()) ?? "0");
+}
+function bumpReviewDoneToday(): number {
+  const n = getReviewDoneToday() + 1;
+  localStorage.setItem(reviewDoneKey(), String(n));
+  return n;
+}
+
+/** Boxes a passing review advances: a flawless "Mastered" (5) fast-tracks +2. */
+function passIncrement(confidence: number): number {
+  return confidence >= 5 ? 2 : 1;
+}
+
+/** Predict the resulting box for a given confidence in review, matching the backend. */
+function predictBox(currentBox: number, confidence: number | null): number {
+  if (confidence == null) return Math.max(currentBox, 1);
+  if (confidence < 3) return 1;
+  return Math.min(currentBox + passIncrement(confidence), MAX_BOX);
+}
+
+function boxDaysLabel(days: number): string {
+  if (days === 1) return "1 day";
+  if (days < 7) return `${days} days`;
+  if (days === 7) return "1 week";
+  if (days < 30) return `${Math.round(days / 7)} weeks`;
+  return `${Math.round(days / 30)} months`;
+}
+
+/** Human label for a due date that's typically in the past ("due today", "3d overdue"). */
+function dueLabel(dateStr: string): string {
+  const diffDays = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+  if (diffDays <= 0) return "due today";
+  if (diffDays === 1) return "1 day overdue";
+  if (diffDays < 30) return `${diffDays} days overdue`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo overdue`;
+  return `${Math.floor(diffDays / 365)}y overdue`;
+}
 
 const DIFF_ORDER: Record<string, number> = { easy: 0, medium: 1, hard: 2 };
 
@@ -663,6 +728,110 @@ function QueryBuilderGroup({ group, onChange, onRemove, depth, availableLanguage
 
 const LC_DRAFT_KEY = "lc-draft-solve";
 
+// Post-solve reflection scaffold, dropped into empty notes on demand.
+const NOTE_TEMPLATE = `**Core trick:**
+
+**Complexity:**
+
+**Failure mode:**
+
+**Additional notes:**
+`;
+
+/** Popover explaining what each template section is for. */
+function TemplateHelp() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onEsc(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("mousedown", handle);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", handle);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative inline-flex" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="text-base-content/30 hover:text-base-content/60 transition-colors flex"
+        title="What goes in each section"
+        aria-label="What goes in each section"
+      >
+        <HelpCircle size={13} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-[calc(100%+0.4rem)] z-50 w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-base-300 bg-base-100 p-3.5 shadow-2xl text-left flex flex-col gap-2.5 select-text cursor-default">
+          <div className="flex flex-col gap-0.5">
+            <p className="text-xs font-black text-base-content">Core trick</p>
+            <p className="text-[11px] text-base-content/55 leading-relaxed">
+              The one-sentence insight that cracks it — the pattern or move to remember next time.
+            </p>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <p className="text-xs font-black text-base-content">Complexity</p>
+            <p className="text-[11px] text-base-content/55 leading-relaxed">
+              Time &amp; space (O(?)), and whether it&apos;s optimal or there&apos;s a cleaner approach.
+            </p>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <p className="text-xs font-black text-base-content">Failure mode</p>
+            <p className="text-[11px] text-base-content/55 leading-relaxed">If you struggled, why — so you know what to drill:</p>
+            <ul className="text-[11px] text-base-content/55 leading-relaxed flex flex-col gap-0.5 mt-0.5">
+              <li><span className="font-bold">clean</span> — nailed it, no help</li>
+              <li><span className="font-bold">conceptual</span> — didn&apos;t know the pattern</li>
+              <li><span className="font-bold">implementation</span> — fumbled the code</li>
+              <li><span className="font-bold">edge case</span> — missed an input</li>
+            </ul>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <p className="text-xs font-black text-base-content">Additional notes</p>
+            <p className="text-[11px] text-base-content/55 leading-relaxed">
+              Anything else — gotchas, variations to watch for, links.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Notes editor with a one-click template scaffold (shown only when empty). */
+function NotesField({ value, onChange, minRows = 4, label = "Notes" }: {
+  value: string; onChange: (v: string) => void; minRows?: number; label?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-black text-base-content/40">
+          {label} <span className="font-normal opacity-60">(optional)</span>
+        </label>
+        <div className="flex items-center gap-2 shrink-0">
+          {!value.trim() && (
+            <button
+              type="button"
+              onClick={() => onChange(NOTE_TEMPLATE)}
+              className="text-[10px] font-black text-base-content/40 hover:text-base-content/70 flex items-center gap-1"
+            >
+              <Plus size={10} /> Template
+            </button>
+          )}
+          <TemplateHelp />
+        </div>
+      </div>
+      <NoteEditor value={value} onChange={onChange} minRows={minRows} />
+    </div>
+  );
+}
+
 function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => void }) {
   const { theme }   = useTheme();
   const queryClient = useQueryClient();
@@ -870,10 +1039,7 @@ function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => vo
             <ConfidencePicker value={confidence} onChange={setConfidence} />
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-black text-base-content/40">Notes <span className="font-normal opacity-60">(optional)</span></label>
-            <NoteEditor value={notes} onChange={setNotes} minRows={4} />
-          </div>
+          <NotesField value={notes} onChange={setNotes} minRows={4} />
 
           <div className="flex flex-col gap-1">
             <label className="text-xs font-black text-base-content/40">Code</label>
@@ -913,13 +1079,13 @@ type EditPayload = {
 };
 
 function SolveAttempt({
-  solve, attemptNumber, token,
+  solve, attemptNumber, token, defaultExpanded = false,
 }: {
-  solve: Solve; attemptNumber: number; token: string; onUpdated: () => void;
+  solve: Solve; attemptNumber: number; token: string; defaultExpanded?: boolean;
 }) {
   const { theme }   = useTheme();
   const queryClient = useQueryClient();
-  const [expanded,  setExpanded]  = useState(false);
+  const [expanded,  setExpanded]  = useState(defaultExpanded);
   const [editing,   setEditing]   = useState(false);
   const [editError, setEditError] = useState("");
 
@@ -1180,7 +1346,7 @@ function SolveAttempt({
           {solve.notes && (
             <div>
               <p className="text-[10px] font-black text-base-content/30 mb-1">NOTES</p>
-              <div className="markdown-notes">
+              <div className="markdown-notes prose prose-sm max-w-none text-base-content/70">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{solve.notes}</ReactMarkdown>
               </div>
             </div>
@@ -1206,12 +1372,12 @@ function SolveAttempt({
 
 // ── QuickSolveForm — add a new attempt from inside the card ───────────────
 
-function QuickSolveForm({ problem, token, onSuccess, onCancel }: {
-  problem: Problem; token: string; onSuccess: () => void; onCancel: () => void;
+function QuickSolveForm({ problem, token, onSuccess, onCancel, defaultLanguage }: {
+  problem: Problem; token: string; onSuccess: () => void; onCancel: () => void; defaultLanguage?: string;
 }) {
   const { theme }    = useTheme();
   const queryClient  = useQueryClient();
-  const [language,      setLanguage]      = useState("Python");
+  const [language,      setLanguage]      = useState(defaultLanguage ?? "Python");
   const [timeC,         setTimeC]         = useState("");
   const [spaceC,        setSpaceC]        = useState("");
   const [notes,      setNotes]      = useState("");
@@ -1278,10 +1444,7 @@ function QuickSolveForm({ problem, token, onSuccess, onCancel }: {
         <ConfidencePicker value={confidence} onChange={setConfidence} />
       </div>
 
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-black text-base-content/40">Notes <span className="font-normal opacity-60">(optional)</span></label>
-        <NoteEditor value={notes} onChange={setNotes} minRows={4} />
-      </div>
+      <NotesField value={notes} onChange={setNotes} minRows={4} />
 
       <div className="flex flex-col gap-1">
         <label className="text-xs font-black text-base-content/40">Code</label>
@@ -1452,29 +1615,50 @@ function TopicEditor({ problem, token, availableTopics }: {
 // ── SolveGroupCard ─────────────────────────────────────────────────────────
 
 function SolveGroupCard({
-  group, token, onUpdated, availableTopics,
+  group, index, token, onUpdated, availableTopics,
 }: {
-  group: SolveGroup; token: string; onUpdated: () => void; availableTopics: string[];
+  group: SolveGroup; index: number; token: string; onUpdated: () => void; availableTopics: string[];
 }) {
   const [expanded,      setExpanded]      = useState(false);
   const [addingResolve, setAddingResolve] = useState(false);
 
   const confSolve        = [...group.solves].reverse().find(s => s.confidence != null);
   const latestConf       = confSolve?.confidence != null ? CONFIDENCE_LABELS[confSolve.confidence] : null;
+  const latestLang       = [...group.solves].reverse().find(s => s.language)?.language ?? null;
   const isImported       = group.solves.every(s => s.is_imported);
   const lastNonImported  = [...group.solves].reverse().find(s => !s.is_imported);
 
   return (
     <div
-      className="rounded-2xl bg-base-100 border-2 border-base-300 overflow-hidden"
-      style={{ boxShadow: "0 4px 0 rgba(0,0,0,0.08)" }}
+      className="card-rise group/card rounded-2xl bg-base-100 border-2 border-base-300 overflow-hidden transition-transform duration-150 hover:-translate-y-0.5"
+      style={{
+        boxShadow: "0 4px 0 rgba(0,0,0,0.08)",
+        animationDelay: `${Math.min(index, 12) * 45}ms`,
+      }}
     >
       {/* Single row */}
       <div className="flex items-center gap-3 px-4 py-3.5">
         <button onClick={() => setExpanded(v => !v)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
           <span className="font-mono text-xs text-base-content/30 shrink-0 w-10">{group.problem.leetcode_id}.</span>
           <span className="flex-1 font-black text-sm text-base-content truncate min-w-0">{group.problem.title}</span>
+          {group.solves.length > 1 && (
+            <span className="shrink-0 text-[10px] font-bold text-base-content/30">×{group.solves.length}</span>
+          )}
         </button>
+        {latestLang && (
+          <span className="hidden sm:block shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full"
+            style={{ color: langColor(latestLang), backgroundColor: `${langColor(latestLang)}20`, border: `1px solid ${langColor(latestLang)}44` }}>
+            {latestLang}
+          </span>
+        )}
+        {latestConf && (
+          <span className="shrink-0 size-2 rounded-full" title={latestConf.label}
+            style={{ backgroundColor: latestConf.color }} />
+        )}
+        <DiffBadge difficulty={group.problem.difficulty} />
+        <span className="shrink-0 text-[11px] font-semibold text-base-content/35 w-16 text-right">
+          {isImported ? "imported" : lastNonImported ? timeAgo(lastNonImported.solved_at) : ""}
+        </span>
         <a
           href={`https://leetcode.com/problems/${group.problem.slug}/`}
           target="_blank"
@@ -1485,22 +1669,6 @@ function SolveGroupCard({
         >
           <ExternalLink size={13} />
         </a>
-        <DiffBadge difficulty={group.problem.difficulty} />
-        {latestConf && (
-          <span className="text-[10px] font-black px-2 py-0.5 rounded-full shrink-0"
-            style={{ color: latestConf.color, backgroundColor: `${latestConf.color}20` }}>
-            {latestConf.label}
-          </span>
-        )}
-        {isImported ? (
-          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-base-300 text-base-content/40 shrink-0">
-            imported
-          </span>
-        ) : lastNonImported ? (
-          <span className="text-[10px] font-semibold text-base-content/35 shrink-0">
-            {timeAgo(lastNonImported.solved_at)}
-          </span>
-        ) : null}
         <button onClick={() => setExpanded(v => !v)} className="shrink-0 text-base-content/30">
           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
@@ -1510,13 +1678,20 @@ function SolveGroupCard({
         <div className="border-t border-base-300">
           <TopicEditor problem={group.problem} token={token} availableTopics={availableTopics} />
           {group.solves.map((solve, idx) => (
-            <SolveAttempt key={solve.id} solve={solve} attemptNumber={idx + 1} token={token} onUpdated={onUpdated} />
+            <SolveAttempt
+              key={solve.id}
+              solve={solve}
+              attemptNumber={idx + 1}
+              token={token}
+              defaultExpanded={idx === group.solves.length - 1}
+            />
           ))}
 
           {addingResolve ? (
             <QuickSolveForm
               problem={group.problem}
               token={token}
+              defaultLanguage={[...group.solves].reverse().find(s => s.language)?.language ?? undefined}
               onSuccess={() => { setAddingResolve(false); onUpdated(); }}
               onCancel={() => setAddingResolve(false)}
             />
@@ -1532,6 +1707,489 @@ function SolveGroupCard({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Review (spaced repetition) ─────────────────────────────────────────────
+
+function BoxPill({ box }: { box: number }) {
+  return (
+    <span
+      className="shrink-0 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full"
+      style={{
+        color: "#a78bfa",
+        backgroundColor: "#a78bfa18",
+        border: "1px solid #a78bfa44",
+      }}
+      title={`Leitner box ${box} — review interval ${boxDaysLabel(BOX_DAYS[box] ?? 1)}`}
+    >
+      Box {box}
+    </span>
+  );
+}
+
+function SpeedRunTimer() {
+  const [secs, setSecs] = useState<number | null>(null);
+  useEffect(() => {
+    if (secs == null || secs <= 0) return;
+    const id = setTimeout(() => setSecs(s => (s ?? 1) - 1), 1000);
+    return () => clearTimeout(id);
+  }, [secs]);
+  const label =
+    secs == null ? "Start 3-min timer"
+    : secs === 0 ? "Time's up"
+    : `${Math.floor(secs / 60)}:${(secs % 60).toString().padStart(2, "0")}`;
+  return (
+    <button
+      type="button"
+      onClick={() => setSecs(180)}
+      className="btn btn-xs font-black gap-1.5 shrink-0"
+      style={{
+        color: secs === 0 ? "#ef4444" : "#a78bfa",
+        backgroundColor: secs === 0 ? "#ef444414" : "#a78bfa18",
+        border: `1px solid ${secs === 0 ? "#ef444444" : "#a78bfa44"}`,
+      }}
+    >
+      <Timer size={12} /> {label}
+    </button>
+  );
+}
+
+function ReviewCard({ item, token, onLogged, onSkip }: {
+  item: ReviewDueItem; token: string; onLogged: () => void; onSkip: () => void;
+}) {
+  const { theme } = useTheme();
+  const [revealed,   setRevealed]   = useState(false);
+  const [confidence, setConfidence] = useState<number | null>(null);
+  const [showUpdate, setShowUpdate] = useState(false);
+  const [language,   setLanguage]   = useState(item.last_solve?.language ?? "Python");
+  const [timeC,      setTimeC]      = useState("");
+  const [spaceC,     setSpaceC]     = useState("");
+  const [notes,      setNotes]      = useState("");
+  const [code,       setCode]       = useState("");
+
+  const prev   = item.last_solve;
+  const diff   = item.problem.difficulty.toLowerCase();
+  const diffC  = DIFF_COLORS[diff] ?? DIFF_COLORS.medium;
+  const nextBox  = confidence != null ? predictBox(item.box, confidence) : null;
+  const passed   = confidence != null && confidence >= 3;
+  const mastered = confidence === 5;
+  const speedRun = !item.imported_only && item.box >= SPEEDRUN_BOX;
+  const graduated = !item.imported_only && passed &&
+    item.box + passIncrement(confidence ?? 0) > MAX_BOX;
+
+  const { mutate: logReview, isPending } = useMutation<Solve, Error>({
+    mutationFn: async () => {
+      const r = await authFetch(`${API_URL}/api/leetcode/solves`, token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leetcode_id: item.problem.leetcode_id,
+          title:       item.problem.title,
+          slug:        item.problem.slug,
+          difficulty:  item.problem.difficulty,
+          topics:      item.problem.topics,
+          language:    language || null,
+          code,
+          notes:       notes || null,
+          confidence,
+          time_complexity:  timeC  || null,
+          space_complexity: spaceC || null,
+          from_review: true,
+        }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail ?? "Something went wrong");
+      return r.json();
+    },
+    onSuccess: () => {
+      toast.success(
+        graduated ? "🎓 Graduated — archived from active review!"
+        : mastered ? "⚡ Mastered — fast-tracked two boxes!"
+        : passed ? "Nice — promoted a box!"
+        : "Logged — back to Box 1"
+      );
+      onLogged();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <div className="rounded-2xl bg-base-100 border-2 border-base-300 overflow-hidden"
+      style={{ boxShadow: "0 4px 0 rgba(0,0,0,0.08)" }}>
+      {/* Problem header */}
+      <div className="px-6 py-5 flex flex-col gap-3 border-b-2" style={{ borderColor: diffC.border, backgroundColor: diffC.bg }}>
+        <div className="flex items-center gap-3">
+          {item.imported_only ? (
+            <span className="shrink-0 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-base-300 text-base-content/45">
+              Imported
+            </span>
+          ) : (
+            <BoxPill box={item.box} />
+          )}
+          <span className="text-[11px] font-bold text-base-content/40">
+            {item.imported_only ? "no recorded solution" : dueLabel(item.next_review_at)}
+          </span>
+          {item.solve_count > 0 && !item.imported_only && (
+            <span className="text-[11px] font-semibold text-base-content/35">
+              solved {item.solve_count}×
+            </span>
+          )}
+          <DiffBadge difficulty={item.problem.difficulty} />
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-sm text-base-content/40 shrink-0">{item.problem.leetcode_id}.</span>
+          <span className="font-black text-lg text-base-content flex-1 min-w-0">{item.problem.title}</span>
+        </div>
+        {item.problem.topics.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {item.problem.topics.map(t => (
+              <span key={t} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-base-100/70 text-base-content/55">{t}</span>
+            ))}
+          </div>
+        )}
+        <a
+          href={`https://leetcode.com/problems/${item.problem.slug}/`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn btn-sm self-start gap-2 font-black text-white border-none mt-1"
+          style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}
+        >
+          <ExternalLink size={14} /> {speedRun ? "Open the problem" : "Solve it on LeetCode"}
+        </a>
+      </div>
+
+      {/* Speed-run guidance for high boxes */}
+      {speedRun && (
+        <div className="px-6 py-3 border-b border-base-300/60 flex items-center gap-3 flex-wrap" style={{ backgroundColor: "#a78bfa10" }}>
+          <span className="text-[11px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0" style={{ color: "#a78bfa" }}>
+            <Zap size={12} /> Speed-run
+          </span>
+          <span className="text-xs text-base-content/55 flex-1 min-w-[12rem]">
+            Don&apos;t re-type the code. Blueprint the approach out loud (~3 min) — data structure, the key trick, time/space — then reveal &amp; check it matches.
+          </span>
+          <SpeedRunTimer />
+        </div>
+      )}
+
+      {/* Reveal previous solution (toggle) */}
+      <div className="px-6 py-4 border-b border-base-300/60 flex flex-col gap-3">
+        <button
+          onClick={() => setRevealed(v => !v)}
+          className="btn btn-sm btn-ghost gap-2 self-start font-bold text-base-content/50 hover:text-base-content/80 border border-base-300"
+        >
+          <Eye size={14} /> {revealed ? "Hide my previous solution" : "Reveal my previous solution"}
+          {revealed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        </button>
+        {revealed && (
+          prev && (prev.code || prev.notes || prev.time_complexity || prev.space_complexity) ? (
+            <div className="flex flex-col gap-3">
+              <p className="text-[10px] font-black text-base-content/30 uppercase tracking-wider">Your previous solution</p>
+              {(prev.time_complexity || prev.space_complexity) && (
+                <div className="flex gap-6">
+                  {prev.time_complexity && (
+                    <div><p className="text-[10px] font-black text-base-content/30 mb-0.5">TIME</p>
+                      <p className="font-mono text-xs font-bold text-base-content/70">{prev.time_complexity}</p></div>
+                  )}
+                  {prev.space_complexity && (
+                    <div><p className="text-[10px] font-black text-base-content/30 mb-0.5">SPACE</p>
+                      <p className="font-mono text-xs font-bold text-base-content/70">{prev.space_complexity}</p></div>
+                  )}
+                </div>
+              )}
+              {prev.notes && (
+                <div className="markdown-notes prose prose-sm max-w-none text-base-content/70">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{prev.notes}</ReactMarkdown>
+                </div>
+              )}
+              {prev.code && (
+                <div className="rounded-xl overflow-hidden">
+                  <SyntaxHighlighter language={hljsLang(prev.language)}
+                    style={theme === "dark" ? atomOneDark : atomOneLight}
+                    customStyle={{ margin: 0, borderRadius: "0.75rem", fontSize: "13px", lineHeight: "1.7", padding: "1.25rem" }}
+                    showLineNumbers wrapLongLines={false}>
+                    {prev.code}
+                  </SyntaxHighlighter>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs font-semibold text-base-content/35 italic">No previous solution recorded for this problem.</p>
+          )
+        )}
+      </div>
+
+      {/* Rate & reschedule */}
+      <div className="px-6 py-5 flex flex-col gap-4 bg-base-200/30">
+        <div className="flex flex-col gap-2">
+          <p className="text-[11px] font-black text-base-content/40 uppercase tracking-wider">
+            {speedRun ? "Did your blueprint match?" : "How did it go?"}
+          </p>
+          <ConfidencePicker value={confidence} onChange={setConfidence} />
+          {nextBox != null && (
+            <p className="text-[11px] font-bold mt-1" style={{ color: passed ? "#22c55e" : "#ef4444" }}>
+              {graduated
+                ? "Mastered → graduates 🎓 (archived from active review)"
+                : mastered
+                ? `Mastered → fast-track ⚡ to Box ${nextBox} · next review in ${boxDaysLabel(BOX_DAYS[nextBox])}`
+                : passed
+                ? `Pass → moves to Box ${nextBox} · next review in ${boxDaysLabel(BOX_DAYS[nextBox])}`
+                : `Miss → back to Box ${nextBox} · review again in ${boxDaysLabel(BOX_DAYS[nextBox])}`}
+            </p>
+          )}
+        </div>
+
+        <button onClick={() => setShowUpdate(v => !v)}
+          className="btn btn-xs btn-ghost self-start gap-1.5 font-bold text-base-content/40 hover:text-base-content/70">
+          <Plus size={11} /> {showUpdate ? "Hide updated solution" : "Record an updated solution (optional)"}
+          {showUpdate ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+        </button>
+        {showUpdate && (
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-black text-base-content/40">Language</label>
+                <select value={language} onChange={e => setLanguage(e.target.value)} className="select select-bordered select-sm w-full">
+                  {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-black text-base-content/40">Time</label>
+                <input value={timeC} onChange={e => setTimeC(e.target.value)} placeholder="O(n log n)" className="input input-bordered input-sm w-full font-mono" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-black text-base-content/40">Space</label>
+                <input value={spaceC} onChange={e => setSpaceC(e.target.value)} placeholder="O(n)" className="input input-bordered input-sm w-full font-mono" />
+              </div>
+            </div>
+            <NotesField value={notes} onChange={setNotes} minRows={3} />
+            <div className="rounded-xl overflow-hidden border border-base-300">
+              <CodeMirror value={code} onChange={setCode} extensions={cmExtensions(language)}
+                theme={theme === "dark" ? githubDark : githubLight}
+                basicSetup={{ lineNumbers: true, foldGutter: false, autocompletion: false }}
+                style={{ fontSize: "13px", minHeight: "120px" }} />
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => logReview()}
+            disabled={confidence == null || isPending}
+            className="btn btn-sm font-black text-white border-none gap-2 flex-1 disabled:opacity-40"
+            style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}
+          >
+            {isPending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            {confidence == null ? "Rate to reschedule" : "Log review"}
+          </button>
+          <button onClick={onSkip} className="btn btn-sm btn-ghost font-black gap-1.5 text-base-content/50">
+            <SkipForward size={13} /> Skip
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewHelp() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onEsc(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("mousedown", handle);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", handle);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative inline-flex" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="text-base-content/30 hover:text-base-content/60 transition-colors flex"
+        title="How review works"
+        aria-label="How review works"
+      >
+        <HelpCircle size={15} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-[calc(100%+0.5rem)] z-50 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-base-300 bg-base-100 p-4 shadow-2xl text-left flex flex-col gap-3 select-text cursor-default">
+          <div className="flex flex-col gap-1">
+            <p className="font-black text-sm text-base-content">Spaced repetition</p>
+            <p className="text-xs text-base-content/60 leading-relaxed">
+              Each problem sits in a box that sets how long until you see it again.
+              After re-solving, rate how it went:
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-black" style={{ color: "#22c55e" }}>Got It +</span>
+              <span className="text-base-content/55">moves up a box — longer gap</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-black" style={{ color: "#ef4444" }}>Shaky / Struggled</span>
+              <span className="text-base-content/55">drops to Box 1 — see it tomorrow</span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1 pt-1 border-t border-base-300">
+            <p className="text-[10px] font-black text-base-content/30 uppercase tracking-wider mt-1">Schedule</p>
+            {[1, 2, 3, 4, 5].map(b => (
+              <div key={b} className="flex items-center justify-between text-[11px]">
+                <span className="font-bold text-base-content/50">
+                  Box {b}{b >= SPEEDRUN_BOX && <span style={{ color: "#a78bfa" }}> ⚡</span>}
+                </span>
+                <span className="font-mono text-base-content/40">every {boxDaysLabel(BOX_DAYS[b])}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-base-content/45 leading-relaxed pt-1 border-t border-base-300">
+            <span className="font-bold" style={{ color: "#a78bfa" }}>⚡ Boxes {SPEEDRUN_BOX}–{MAX_BOX}:</span> blueprint
+            the approach out loud in ~3 min instead of coding it — a fast warm-up.
+          </p>
+          <p className="text-[11px] text-base-content/45 leading-relaxed">
+            Rate <span className="font-bold" style={{ color: "#a78bfa" }}>Mastered</span> on a review
+            and it <span className="font-bold">fast-tracks ⚡ two boxes</span> at once (or graduates
+            straight from the top).
+          </p>
+          <p className="text-[11px] text-base-content/45 leading-relaxed">
+            We surface about <span className="font-bold">{DAILY_REVIEW_GOAL} a day</span> so a big
+            backlog stays a warm-up, not a wall.
+          </p>
+          <p className="text-[11px] text-base-content/45 leading-relaxed">
+            Pass a <span className="font-bold">Box {MAX_BOX}</span> problem in review and it
+            <span className="font-bold"> graduates 🎓</span> — archived out of the queue (your data stays;
+            re-solve it anytime to bring it back).
+          </p>
+          <p className="text-[11px] text-base-content/45 leading-relaxed pt-1 border-t border-base-300">
+            <span className="font-bold">Include imported</span> also surfaces problems you imported
+            but never recorded a solution for, so you can re-solve them.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImportedToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none" title="Also surface problems you only imported (no recorded solution) so you can re-solve and record them.">
+      <input
+        type="checkbox"
+        checked={value}
+        onChange={e => onChange(e.target.checked)}
+        className="toggle toggle-sm"
+        style={{ "--tglbg": "var(--game-accent)" } as React.CSSProperties}
+      />
+      <span className="text-xs font-bold text-base-content/50">Include imported</span>
+    </label>
+  );
+}
+
+function ReviewQueue({ items, isLoading, token, includeImported, onToggleImported, onChanged }: {
+  items: ReviewDueItem[]; isLoading: boolean; token: string;
+  includeImported: boolean; onToggleImported: (v: boolean) => void; onChanged: () => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const [doneToday, setDoneToday] = useState(0);
+  const [override, setOverride] = useState(false);
+
+  useEffect(() => { setDoneToday(getReviewDoneToday()); }, []);
+
+  function handleLogged() {
+    setDoneToday(bumpReviewDoneToday());
+    onChanged();
+  }
+
+  function header(title: string, extra?: React.ReactNode) {
+    return (
+      <div className="flex items-center gap-2 flex-wrap">
+        <Brain size={16} style={{ color: "var(--game-accent)" }} />
+        <p className="font-black text-sm text-base-content">{title}</p>
+        <ReviewHelp />
+        {extra}
+        <div className="ml-auto">
+          <ImportedToggle value={includeImported} onChange={onToggleImported} />
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return <p className="text-sm font-bold text-base-content/30 text-center py-10">Loading review queue…</p>;
+  }
+
+  const progress = (
+    <span className="text-xs font-bold">
+      <span style={{ color: "var(--game-accent)" }}>Today {doneToday}/{DAILY_REVIEW_GOAL}</span>
+      {items.length > 0 && <span className="text-base-content/30"> · {items.length} due</span>}
+    </span>
+  );
+
+  if (items.length === 0) {
+    return (
+      <div className="flex flex-col gap-4">
+        {header("Review", progress)}
+        <div className="flex flex-col items-center gap-3 py-16 text-base-content/30">
+          <Sparkles size={40} style={{ color: "var(--game-accent)" }} />
+          <div className="flex flex-col items-center gap-1">
+            <p className="font-black text-sm text-base-content/60">All caught up</p>
+            <p className="text-xs font-semibold">
+              {includeImported
+                ? "Nothing due, and no imported problems left to record."
+                : "No problems due for review. Toggle imports to drill ones you only imported."}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Daily cap: once you hit the goal, suggest stopping (you can override).
+  if (doneToday >= DAILY_REVIEW_GOAL && !override) {
+    return (
+      <div className="flex flex-col gap-4">
+        {header("Review", progress)}
+        <div className="flex flex-col items-center gap-4 py-14 text-base-content/40">
+          <Sparkles size={40} style={{ color: "var(--game-accent)" }} />
+          <div className="flex flex-col items-center gap-1 text-center max-w-xs">
+            <p className="font-black text-sm text-base-content/70">Daily goal reached 🎉</p>
+            <p className="text-xs font-semibold">
+              {doneToday} reviews done today. {items.length} more {items.length === 1 ? "is" : "are"} due —
+              but spacing them out beats burning out. Come back tomorrow, or push on.
+            </p>
+          </div>
+          <button
+            onClick={() => setOverride(true)}
+            className="btn btn-sm btn-ghost font-black border border-base-300 gap-1.5"
+          >
+            <Zap size={13} /> Keep reviewing
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const safeIndex = Math.min(index, items.length - 1);
+  const item = items[safeIndex];
+
+  return (
+    <div className="flex flex-col gap-4">
+      {header("Due for review", progress)}
+      <ReviewCard
+        key={item.problem.leetcode_id}
+        item={item}
+        token={token}
+        onLogged={handleLogged}
+        onSkip={() => setIndex(i => (i + 1) % items.length)}
+      />
     </div>
   );
 }
@@ -1553,11 +2211,29 @@ export default function LeetCodePage() {
   const [pageSize,     setPageSize]     = useState(25);
   const [pageIndex,    setPageIndex]    = useState(0);
 
+  const [tab, setTab] = useState<"review" | "library">("library");
+  const [includeImported, setIncludeImported] = useState(false);
+  const tabInitialized = useRef(false);
+
   const { data: solves = [], isLoading } = useQuery<Solve[]>({
     queryKey: ["leetcode", "solves"],
     queryFn:  () => authFetch(`${API_URL}/api/leetcode/solves`, token!).then(r => r.json()),
     enabled:  !!token,
   });
+
+  const { data: dueItems = [], isLoading: dueLoading } = useQuery<ReviewDueItem[]>({
+    queryKey: ["leetcode", "review", includeImported],
+    queryFn:  () => authFetch(`${API_URL}/api/leetcode/review/due?include_imported=${includeImported}`, token!).then(r => r.json()),
+    enabled:  !!token,
+  });
+
+  // Land on the Review tab the first time data loads if anything is due.
+  useEffect(() => {
+    if (!tabInitialized.current && !dueLoading) {
+      tabInitialized.current = true;
+      if (dueItems.length > 0) setTab("review");
+    }
+  }, [dueLoading, dueItems.length]);
 
   const { data: stats } = useQuery<{
     total: number;
@@ -1726,7 +2402,7 @@ export default function LeetCodePage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-8 py-10 flex flex-col gap-8">
+    <div className="mx-auto w-full max-w-5xl px-8 py-10 flex flex-col gap-6">
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -1734,7 +2410,7 @@ export default function LeetCodePage() {
           <div className="rounded-lg p-1.5" style={{ backgroundColor: "color-mix(in srgb, var(--game-accent) 20%, transparent)" }}>
             <Code2 size={16} style={{ color: "var(--game-accent)" }} />
           </div>
-          <h2 className="text-xl font-black text-base-content">Leetcode</h2>
+          <h2 className="text-xl font-black text-base-content">LeetCode</h2>
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -1744,35 +2420,35 @@ export default function LeetCodePage() {
             onChange={handleImportFile}
             className="hidden"
           />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-            className="btn btn-sm btn-ghost gap-1.5 font-bold text-base-content/50 border border-base-300"
-            title="Import solves from a JSON export"
-          >
-            {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-            Import
-          </button>
-          {groups.length > 0 && (
-            <button
-              onClick={exportSolves}
-              className="btn btn-sm btn-ghost gap-1.5 font-bold text-base-content/50 border border-base-300"
-              title="Export all solves as JSON"
-            >
-              <Download size={13} />
-              Export
-            </button>
-          )}
-          {groups.length > 0 && (
-            <button
-              onClick={() => clearModalRef.current?.showModal()}
-              className="btn btn-sm btn-ghost gap-1.5 font-bold text-base-content/50 hover:text-error border border-base-300"
-              title="Delete all logged solves"
-            >
-              <Trash2 size={13} />
-              Clear
-            </button>
-          )}
+          {/* Utility actions (overflow menu) */}
+          <div className="dropdown dropdown-end">
+            <div tabIndex={0} role="button"
+              className="btn btn-sm btn-ghost border border-base-300 text-base-content/50 px-2"
+              title="More actions">
+              {importing ? <Loader2 size={15} className="animate-spin" /> : <MoreHorizontal size={15} />}
+            </div>
+            <ul tabIndex={0} className="dropdown-content menu menu-sm z-10 mt-1 w-44 rounded-xl bg-base-100 border border-base-300 p-1.5 shadow-lg">
+              <li>
+                <button onClick={() => fileInputRef.current?.click()} disabled={importing} className="font-bold gap-2">
+                  <Upload size={14} /> Import JSON
+                </button>
+              </li>
+              {groups.length > 0 && (
+                <li>
+                  <button onClick={exportSolves} className="font-bold gap-2">
+                    <Download size={14} /> Export JSON
+                  </button>
+                </li>
+              )}
+              {groups.length > 0 && (
+                <li>
+                  <button onClick={() => clearModalRef.current?.showModal()} className="font-bold gap-2 text-error hover:bg-error/10">
+                    <Trash2 size={14} /> Clear all
+                  </button>
+                </li>
+              )}
+            </ul>
+          </div>
           <button onClick={() => modalRef.current?.showModal()}
             className="btn btn-sm gap-2 font-black text-white border-none"
             style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}>
@@ -1784,22 +2460,44 @@ export default function LeetCodePage() {
 
       {/* Stats bar */}
       {total > 0 && (
-        <div className="rounded-2xl bg-base-100 border-2 border-base-300 px-5 py-4 grid grid-cols-4 gap-4"
+        <div className="atmos-accent card-rise rounded-2xl border-2 border-base-300 px-6 py-5 flex items-center gap-6"
           style={{ boxShadow: "0 4px 0 rgba(0,0,0,0.08)" }}>
-          <div className="flex flex-col items-center gap-1">
-            <span className="font-black text-2xl text-base-content">{total}</span>
-            <span className="text-[10px] font-black uppercase tracking-wider text-base-content/40">Total</span>
+          {/* Hero total */}
+          <div className="flex flex-col shrink-0">
+            <span className="font-black text-4xl leading-none" style={{ color: "var(--game-accent)" }}>{total}</span>
+            <span className="mt-1.5 text-[10px] font-black uppercase tracking-wider text-base-content/40">Solved</span>
           </div>
-          {[
-            { label: "Easy",   count: easy,   diff: "easy"   },
-            { label: "Medium", count: medium, diff: "medium" },
-            { label: "Hard",   count: hard,   diff: "hard"   },
-          ].map(({ label, count, diff }) => (
-            <div key={diff} className="flex flex-col items-center gap-1">
-              <span className="font-black text-2xl" style={{ color: DIFF_COLORS[diff].text }}>{count}</span>
-              <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: DIFF_COLORS[diff].text, opacity: 0.7 }}>{label}</span>
+
+          <div className="h-12 w-px bg-base-300 shrink-0" />
+
+          {/* Difficulty breakdown + proportion bar */}
+          <div className="flex-1 flex flex-col gap-3 min-w-0">
+            <div className="grid grid-cols-3 gap-4">
+              {[
+                { label: "Easy",   count: easy,   diff: "easy"   },
+                { label: "Medium", count: medium, diff: "medium" },
+                { label: "Hard",   count: hard,   diff: "hard"   },
+              ].map(({ label, count, diff }) => (
+                <div key={diff} className="flex items-center gap-2 min-w-0">
+                  <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: DIFF_COLORS[diff].text }} />
+                  <span className="font-black text-lg leading-none" style={{ color: DIFF_COLORS[diff].text }}>{count}</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-base-content/35 truncate">{label}</span>
+                </div>
+              ))}
             </div>
-          ))}
+            {/* Segmented proportion bar */}
+            <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-base-300">
+              {[
+                { count: easy,   diff: "easy"   },
+                { count: medium, diff: "medium" },
+                { count: hard,   diff: "hard"   },
+              ].map(({ count, diff }) => (
+                count > 0 ? (
+                  <div key={diff} style={{ width: `${(count / total) * 100}%`, backgroundColor: DIFF_COLORS[diff].text }} />
+                ) : null
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1848,6 +2546,44 @@ export default function LeetCodePage() {
         </form>
       </dialog>
 
+      {/* Tab strip: Review vs Library */}
+      <div className="flex items-center gap-1 border-b border-base-300">
+        {([
+          { id: "review",  label: "Review",  badge: dueItems.length },
+          { id: "library", label: "Library", badge: 0 },
+        ] as const).map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-black transition-colors -mb-px border-b-2 ${
+              tab === t.id
+                ? "border-[var(--game-accent)] text-base-content"
+                : "border-transparent text-base-content/40 hover:text-base-content/70"
+            }`}
+          >
+            {t.id === "review" && <Brain size={14} />}
+            {t.label}
+            {t.badge > 0 && (
+              <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full"
+                style={{ color: "#fff", backgroundColor: "var(--game-accent)" }}>
+                {t.badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === "review" ? (
+        <ReviewQueue
+          items={dueItems}
+          isLoading={dueLoading}
+          token={token!}
+          includeImported={includeImported}
+          onToggleImported={setIncludeImported}
+          onChanged={() => queryClient.invalidateQueries({ queryKey: ["leetcode"] })}
+        />
+      ) : (
+        <>
       {/* Filter + Sort bar */}
       {groups.length > 0 && (
         <>
@@ -1959,10 +2695,11 @@ export default function LeetCodePage() {
         ) : visibleCount === 0 ? (
           <p className="text-sm font-bold text-base-content/30 text-center py-10">No problems match your filters.</p>
         ) : (
-          table.getRowModel().rows.map(row => (
+          table.getRowModel().rows.map((row, i) => (
             <SolveGroupCard
               key={row.original.problem.leetcode_id}
               group={row.original}
+              index={i}
               token={token!}
               onUpdated={() => queryClient.invalidateQueries({ queryKey: ["leetcode"] })}
               availableTopics={availableTopics}
@@ -2017,6 +2754,8 @@ export default function LeetCodePage() {
             className="btn btn-xs btn-ghost font-black disabled:opacity-30"
           >»</button>
         </div>
+      )}
+        </>
       )}
 
     </div>

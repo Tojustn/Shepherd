@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth";
+import { ROUTES } from "@/lib/routes";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Code2, Zap, Check, AlertTriangle, Loader2 } from "lucide-react";
 
@@ -157,7 +158,7 @@ export default function ProfilePage() {
       }).then((r) => { if (!r.ok && r.status !== 204) throw new Error("Delete failed"); }),
     onSuccess: () => {
       logout();
-      router.replace("/");
+      router.replace(ROUTES.home);
     },
   });
 

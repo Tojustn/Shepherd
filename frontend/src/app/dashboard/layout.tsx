@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth";
+import { ROUTES } from "@/lib/routes";
 import { Loading } from "@/components/Loading";
 import { AppSidebar } from "@/components/AppSidebar";
 import { XPProvider } from "@/context/xp";
@@ -10,14 +11,14 @@ import { XPCatchUpBanner } from "@/components/XPCatchUpBanner";
 import { Menu } from "lucide-react";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated, isLoading, token } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isAuthenticated) router.replace("/");
-  }, [isAuthenticated, router]);
+    if (!isLoading && !isAuthenticated) router.replace(ROUTES.home);
+  }, [isLoading, isAuthenticated, router]);
 
-  if (!isAuthenticated) return <Loading />;
+  if (isLoading || !isAuthenticated) return <Loading />;
 
   return (
     <XPProvider>

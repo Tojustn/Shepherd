@@ -1,6 +1,6 @@
 # app/models/leetcode.py
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 from typing import TYPE_CHECKING
@@ -39,3 +39,28 @@ class LeetCodeSolve(Base):
     space_complexity: Mapped[str | None] = mapped_column(String(64), nullable=True)
     confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-5
     is_imported: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class LeetCodeReview(Base):
+    """
+    Per-user, per-problem spaced-repetition state (Leitner 5-box system).
+
+    `box` (1-5) selects the review interval. A passing re-solve (confidence >= 3)
+    promotes the problem one box; a failing one (confidence <= 2) drops it back to
+    box 1. `next_review_at` is recomputed on every solve from the resulting box.
+    """
+    __tablename__ = "leetcode_reviews"
+    __table_args__ = (
+        UniqueConstraint("user_id", "problem_id", name="uq_review_user_problem"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    problem_id: Mapped[int] = mapped_column(ForeignKey("leetcode_problems.id", ondelete="CASCADE"), index=True)
+    box: Mapped[int] = mapped_column(Integer, default=1)  # 1-5
+    next_review_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Graduated out of active review: passed again while already in the top box.
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    problem: Mapped["LeetCodeProblem"] = relationship("LeetCodeProblem")

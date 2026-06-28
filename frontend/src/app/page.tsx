@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { HeroText } from "@/components/HeroText";
 import { useAuth } from "@/context/auth";
+import { ROUTES } from "@/lib/routes";
 import {
   LayoutDashboard, GitBranch, Target, Code2, ArrowRight,
   Flame, Zap, Filter, CheckCircle2, Star,
@@ -166,11 +167,11 @@ interface NodeDef {
 }
 
 const NODES: NodeDef[] = [
-  { id: "dashboard", type: "main",   title: "Dashboard", tagline: "Your command center.",       desc: "XP, level, streaks, and daily quests — all at a glance.",                        color: "#3b82f6", features: ["XP & level progression", "Daily quest board", "At-a-glance stats"],        visual: "dashboard", cardSide: "right", icon: LayoutDashboard, href: "/dashboard" },
-  { id: "repos",     type: "fork",   title: "Repos",     tagline: "Every repo, gamified.",      desc: "Your repos ranked by activity. Click into any one for an interactive commit graph with branches, XP, and file diffs.", color: "#6366f1", features: ["Active / Stale / Abandoned status", "Interactive commit graph", "Activity decay tracking"],  visual: "repos",     cardSide: "left",  icon: GitBranch,       href: "/dashboard/repos" },
-  { id: "streaks",   type: "branch", title: "Streaks",   tagline: "Consistency is the grind.",  desc: "GitHub and Leetcode streaks unified — one place to track your fire.",             color: "#f97316", features: ["Cross-platform streaks", "Current & best streak tracking", "Last activity status"],  visual: "streaks",   cardSide: "right", icon: Flame,           href: "/dashboard" },
-  { id: "goals",     type: "merge",  title: "Goals",     tagline: "Ship. Complete. Level up.",  desc: "Daily quests auto-complete when you ship. Set custom goals on top.",              color: "#22c55e", features: ["Auto-tracked daily quests", "Custom goal builder", "Real-time updates"], visual: "goals",     cardSide: "left",  icon: Target,          href: "/dashboard/goals" },
-  { id: "leetcode",  type: "main",   title: "Leetcode",  tagline: "Your problem journal.",      desc: "Track solves, confidence, topics, and notes — all in one place. Built for grinders.", color: "#f59e0b", features: ["Confidence star ratings", "Topic + difficulty filters", "Code & notes editor"], visual: "leetcode", cardSide: "right", icon: Code2, href: "/dashboard/leetcode" },
+  { id: "dashboard", type: "main",   title: "Dashboard", tagline: "Your command center.",       desc: "XP, level, streaks, and daily quests — all at a glance.",                        color: "#3b82f6", features: ["XP & level progression", "Daily quest board", "At-a-glance stats"],        visual: "dashboard", cardSide: "right", icon: LayoutDashboard, href: ROUTES.dashboard.root },
+  { id: "repos",     type: "fork",   title: "Repos",     tagline: "Every repo, gamified.",      desc: "Your repos ranked by activity. Click into any one for an interactive commit graph with branches, XP, and file diffs.", color: "#6366f1", features: ["Active / Stale / Abandoned status", "Interactive commit graph", "Activity decay tracking"],  visual: "repos",     cardSide: "left",  icon: GitBranch,       href: ROUTES.dashboard.repos },
+  { id: "streaks",   type: "branch", title: "Streaks",   tagline: "Consistency is the grind.",  desc: "GitHub and Leetcode streaks unified — one place to track your fire.",             color: "#f97316", features: ["Cross-platform streaks", "Current & best streak tracking", "Last activity status"],  visual: "streaks",   cardSide: "right", icon: Flame,           href: ROUTES.dashboard.root },
+  { id: "goals",     type: "merge",  title: "Goals",     tagline: "Ship. Complete. Level up.",  desc: "Daily quests auto-complete when you ship. Set custom goals on top.",              color: "#22c55e", features: ["Auto-tracked daily quests", "Custom goal builder", "Real-time updates"], visual: "goals",     cardSide: "left",  icon: Target,          href: ROUTES.dashboard.goals },
+  { id: "leetcode",  type: "main",   title: "Leetcode",  tagline: "Your problem journal.",      desc: "Track solves, confidence, topics, and notes — all in one place. Built for grinders.", color: "#f59e0b", features: ["Confidence star ratings", "Topic + difficulty filters", "Code & notes editor"], visual: "leetcode", cardSide: "right", icon: Code2, href: ROUTES.dashboard.leetcode },
 ];
 
 // ─── SVG Spine ────────────────────────────────────────────────────────────────
@@ -254,7 +255,7 @@ export default function Home() {
   const totalHeight = TOP_PAD * 2 + NODES.length * ROW_H;
 
   useEffect(() => {
-    if (isAuthenticated) router.replace("/dashboard");
+    if (isAuthenticated) router.replace(ROUTES.dashboard.root);
   }, [isAuthenticated, router]);
 
   useEffect(() => {

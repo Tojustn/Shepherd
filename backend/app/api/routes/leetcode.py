@@ -7,11 +7,11 @@ from app.core.security import get_current_user
 from app.core.database import get_db
 from app.models.leetcode import LeetCodeSolve, LeetCodeProblem
 from app.models.user import User
-from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveOut, LCImportRequest, LeetCodeProblemUpdate, LeetCodeProblemOut, LCJsonImportRequest, LCJsonImportResult
+from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveOut, LCImportRequest, LeetCodeProblemUpdate, LeetCodeProblemOut, LCJsonImportRequest, LCJsonImportResult, ReviewDueItem
 from app.services.cache import cache_delete
 from app.services.sse_service import connect, disconnect, push
 from app.schemas.leetcode import LeetCodeSolveUpdate
-from app.services.leetcode_service import update_solve, delete_solve, get_stats, log_solve, get_solve, search_problems, import_historical_solves, import_solves_from_json, validate_leetcode_username
+from app.services.leetcode_service import update_solve, delete_solve, clear_solves, get_stats, log_solve, get_solve, search_problems, import_historical_solves, import_solves_from_json, validate_leetcode_username, get_due_reviews
 from app.services.goal_service import increment_leetcode_goals
 from app.schemas.goal import GoalOut
 from app.models.xp_event import XPSource
@@ -183,6 +183,17 @@ async def remove_solve(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.delete("/solves", status_code=204)
+async def remove_all_solves(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all of the current user's logged solves."""
+    await clear_solves(db, user)
+    await db.commit()
+    await cache_delete(f"user:me:{user.id}")
+
+
 
 
 @router.patch("/problems/{problem_id}", response_model=LeetCodeProblemOut)
@@ -208,6 +219,17 @@ async def patch_problem_topics(
     await db.commit()
     await db.refresh(problem)
     return LeetCodeProblemOut.model_validate(problem)
+
+
+@router.get("/review/due", response_model=list[ReviewDueItem])
+async def get_review_due(
+    include_imported: bool = Query(False, description="Also include imported-only problems (no recorded solution)"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Problems due for spaced-repetition review, most-overdue first."""
+    items = await get_due_reviews(db, user, include_imported=include_imported)
+    return [ReviewDueItem.model_validate(item) for item in items]
 
 
 @router.get("/stats", response_model=LeetCodeStatsOut)

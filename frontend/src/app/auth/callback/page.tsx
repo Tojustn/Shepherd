@@ -3,6 +3,7 @@
 import { Suspense, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth";
+import { ROUTES } from "@/lib/routes";
 import { Loading } from "@/components/Loading";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -20,12 +21,12 @@ function AuthCallbackInner() {
       .find((row) => row.startsWith("auth_token="))
       ?.split("=")[1];
 
-    if (!token) { router.replace("/"); return; }
+    if (!token) { router.replace(ROUTES.home); return; }
 
     fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
-      .then((user) => router.replace(user.onboarding_complete ? "/dashboard" : "/onboarding"))
-      .catch(() => router.replace("/dashboard"));
+      .then((user) => router.replace(user.onboarding_complete ? ROUTES.dashboard.root : ROUTES.onboarding))
+      .catch(() => router.replace(ROUTES.dashboard.root));
   }, []);
 
   return <Loading />;

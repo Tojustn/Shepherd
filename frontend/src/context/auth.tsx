@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 interface AuthContextValue {
   token: string | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
   logout: () => void;
   refreshToken: () => void;
 }
@@ -35,6 +36,7 @@ function clearAuthCookie() {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const stored = getTokenFromCookie();
@@ -43,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else if (stored) {
       clearAuthCookie();
     }
+    setIsLoading(false);
   }, []);
 
   // Check expiry every 30s so mid-session expiry is caught
@@ -70,7 +73,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ token, isAuthenticated: !!token, logout, refreshToken }}>
+    <AuthContext.Provider value={{ token, isAuthenticated: !!token, isLoading, logout, refreshToken }}>
       {children}
     </AuthContext.Provider>
   );
