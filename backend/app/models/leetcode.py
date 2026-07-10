@@ -64,3 +64,44 @@ class LeetCodeReview(Base):
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
     problem: Mapped["LeetCodeProblem"] = relationship("LeetCodeProblem")
+
+
+class LeetCodeTodoList(Base):
+    """
+    A named study list (e.g. "Blind 75", "Company prep"). Todos with a null
+    list_id live in the built-in Backlog pseudo-list.
+    """
+    __tablename__ = "leetcode_todo_lists"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_todolist_user_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LeetCodeTodo(Base):
+    """
+    A problem the user wants to solve (or re-solve). `done` is derived from
+    solves at read time, never stored. One row per (user, problem); `position`
+    orders it within its list.
+    """
+    __tablename__ = "leetcode_todos"
+    __table_args__ = (
+        UniqueConstraint("user_id", "problem_id", name="uq_todo_user_problem"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    problem_id: Mapped[int] = mapped_column(ForeignKey("leetcode_problems.id", ondelete="CASCADE"), index=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Null = the built-in Backlog.
+    list_id: Mapped[int | None] = mapped_column(
+        ForeignKey("leetcode_todo_lists.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    problem: Mapped["LeetCodeProblem"] = relationship("LeetCodeProblem")

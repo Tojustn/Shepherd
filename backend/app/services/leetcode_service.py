@@ -3,14 +3,14 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.leetcode import LeetCodeProblem, LeetCodeSolve, LeetCodeReview
+from app.models.leetcode import LeetCodeProblem, LeetCodeSolve, LeetCodeReview, LeetCodeTodo, LeetCodeTodoList
 from app.models.streak import StreakType
 from app.models.user import User
-from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveUpdate, LCJsonImportProblem
+from app.schemas.leetcode import LeetCodeSolveCreate, LeetCodeSolveUpdate, LCJsonImportProblem, LeetCodeTodoCreate
 from app.services.xp_service import award_xp, XPSource
 from app.services.streak_service import update_streak
 from app.services.cache import cache_set, cache_get
@@ -257,6 +257,123 @@ async def get_due_reviews(
     return items
 
 
+async def snooze_review(db: AsyncSession, user: User, problem_id: int) -> None:
+    """Push a due problem to tomorrow without touching its box — a real 'not today'."""
+    result = await db.execute(
+        select(LeetCodeReview).where(
+            LeetCodeReview.user_id == user.id,
+            LeetCodeReview.problem_id == problem_id,
+            LeetCodeReview.archived == False,  # noqa: E712
+        )
+    )
+    review = result.scalar_one_or_none()
+    if not review:
+        raise ValueError("No active review for this problem")
+    review.next_review_at = datetime.now(tz=timezone.utc) + timedelta(days=1)
+
+
+async def archive_review(db: AsyncSession, user: User, problem_id: int) -> None:
+    """Opt a problem out of review entirely. Logging any new solve reactivates it."""
+    result = await db.execute(
+        select(LeetCodeReview).where(
+            LeetCodeReview.user_id == user.id,
+            LeetCodeReview.problem_id == problem_id,
+            LeetCodeReview.archived == False,  # noqa: E712
+        )
+    )
+    review = result.scalar_one_or_none()
+    if not review:
+        raise ValueError("No active review for this problem")
+    review.archived = True
+
+
+async def rebalance_reviews(db: AsyncSession, user: User, per_day: int = 15) -> dict:
+    """
+    Deflate an oversized due pile: keep the `per_day` most fragile problems
+    (lowest box, then most overdue) due now, and spread the rest across the
+    coming days in chunks of `per_day` — day 1 gets the next chunk, day 2 the
+    one after, and so on.
+    """
+    now = datetime.now(tz=timezone.utc)
+    result = await db.execute(
+        select(LeetCodeReview)
+        .where(
+            LeetCodeReview.user_id == user.id,
+            LeetCodeReview.archived == False,  # noqa: E712
+            LeetCodeReview.next_review_at <= now,
+        )
+        .order_by(LeetCodeReview.box.asc(), LeetCodeReview.next_review_at.asc())
+    )
+    due = list(result.scalars().all())
+    moved = 0
+    for i, review in enumerate(due[per_day:]):
+        review.next_review_at = now + timedelta(days=(i // per_day) + 1)
+        moved += 1
+    return {
+        "kept": min(len(due), per_day),
+        "moved": moved,
+        "spread_days": (moved + per_day - 1) // per_day if moved else 0,
+    }
+
+
+async def get_review_stats(db: AsyncSession, user: User, tz_offset_minutes: int = 0) -> dict:
+    """
+    Pipeline overview: box distribution, graduated count, due-soon forecast, and
+    reviews completed today. "Today" is the user's local day — tz_offset_minutes
+    follows JS Date.getTimezoneOffset() (positive = west of UTC). done_today
+    counts any solve that touched the scheduler today (reviews and fresh solves).
+    """
+    result = await db.execute(
+        select(
+            LeetCodeReview.box,
+            LeetCodeReview.next_review_at,
+            LeetCodeReview.last_reviewed_at,
+            LeetCodeReview.archived,
+        ).where(LeetCodeReview.user_id == user.id)
+    )
+    rows = result.all()
+
+    now = datetime.now(tz=timezone.utc)
+    offset = timedelta(minutes=tz_offset_minutes)
+    local_now = now - offset
+    start_of_today = local_now.replace(hour=0, minute=0, second=0, microsecond=0) + offset
+    end_of_tomorrow = start_of_today + timedelta(days=2)
+
+    box_counts = {b: 0 for b in range(1, MAX_BOX + 1)}
+    graduated = done_today = due_now = due_tomorrow = due_week = 0
+    for box, next_at, last_at, archived in rows:
+        # SQLite returns naive datetimes; they're stored as UTC.
+        if next_at is not None and next_at.tzinfo is None:
+            next_at = next_at.replace(tzinfo=timezone.utc)
+        if last_at is not None and last_at.tzinfo is None:
+            last_at = last_at.replace(tzinfo=timezone.utc)
+        if last_at is not None and last_at >= start_of_today:
+            done_today += 1
+        if archived:
+            graduated += 1
+            continue
+        if box in box_counts:
+            box_counts[box] += 1
+        if next_at is None:
+            continue
+        if next_at <= now:
+            due_now += 1
+        elif next_at <= end_of_tomorrow:
+            due_tomorrow += 1
+        if now < next_at <= now + timedelta(days=7):
+            due_week += 1
+
+    return {
+        "done_today": done_today,
+        "box_counts": {str(k): v for k, v in box_counts.items()},
+        "active": sum(box_counts.values()),
+        "graduated": graduated,
+        "due_now": due_now,
+        "due_tomorrow": due_tomorrow,
+        "due_week": due_week,
+    }
+
+
 _LC_SEARCH_QUERY = """
 query problemSearch($filters: QuestionListFilterInput) {
   problemsetQuestionList: questionList(
@@ -413,6 +530,9 @@ async def log_solve(
     # Update the Leitner schedule for this problem.
     await schedule_review(db, user, problem.id, payload.confidence, from_review=payload.from_review)
 
+    # Note: a solved problem stays on the to-do list, marked done (derived in
+    # get_todos), rather than being deleted — so it reads as a checked-off item.
+
     result = await db.execute(
         select(LeetCodeSolve)
         .where(LeetCodeSolve.id == solve.id)
@@ -438,6 +558,7 @@ async def update_solve(
         raise ValueError("Solve not found")
 
     updates = payload.model_dump(exclude_unset=True)
+    from_review = updates.pop("from_review", False)
     for field, value in updates.items():
         setattr(solve, field, value)
 
@@ -445,6 +566,11 @@ async def update_solve(
         solve.is_imported = False
         if "solved_at" not in updates:
             solve.solved_at = datetime.now(tz=timezone.utc)
+
+    # Editing the original solution from the review queue should still advance
+    # (or reset) the Leitner schedule, exactly like logging a fresh re-solve.
+    if from_review:
+        await schedule_review(db, user, solve.problem_id, solve.confidence, from_review=True)
 
     return solve
 
@@ -873,3 +999,374 @@ async def _fetch_recent_acs_fallback(username: str) -> list[dict]:
 
     results = await asyncio.gather(*[_detail(s) for s in seen])
     return [r for r in results if r is not None]
+
+
+async def _fetch_problem_topics(slug: str) -> list[str] | None:
+    """Fetch a single problem's topic tags from LeetCode's public GraphQL API."""
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        r = await c.post(
+            "https://leetcode.com/graphql/",
+            json={"query": _PROBLEM_DETAIL_QUERY, "variables": {"titleSlug": slug}},
+            headers={"Content-Type": "application/json", "User-Agent": _UA},
+        )
+        q = r.json().get("data", {}).get("question")
+        if not q:
+            return None
+        return [t["name"] for t in q.get("topicTags", [])]
+
+
+async def sync_topics(db: AsyncSession, user: User) -> dict:
+    """
+    Re-sync topic tags for ALL of the user's solved problems from LeetCode,
+    overwriting whatever is currently stored — including any manual edits.
+
+    LeetCode's official tags are treated as the single source of truth so the
+    topic analytics stay consistent (one canonical label per topic). A problem
+    that returns no tags is left untouched rather than wiped to empty.
+
+    Topics live on the shared LeetCodeProblem row, so this benefits every user
+    who has solved the same problem. Returns counts of synced / failed.
+    """
+    result = await db.execute(
+        select(LeetCodeProblem)
+        .join(LeetCodeSolve, LeetCodeSolve.problem_id == LeetCodeProblem.id)
+        .where(LeetCodeSolve.user_id == user.id)
+        .distinct()
+    )
+    problems = list(result.scalars().all())
+    if not problems:
+        return {"synced": 0, "failed": 0}
+
+    semaphore = asyncio.Semaphore(5)
+
+    async def _one(problem: LeetCodeProblem) -> tuple[LeetCodeProblem, list[str]] | None:
+        async with semaphore:
+            try:
+                topics = await _fetch_problem_topics(problem.slug)
+            except Exception:
+                return None
+            return (problem, topics) if topics else None
+
+    fetched = await asyncio.gather(*[_one(p) for p in problems])
+
+    synced = 0
+    for res in fetched:
+        if res is None:
+            continue
+        problem, topics = res
+        problem.topics = topics
+        synced += 1
+
+    return {"synced": synced, "failed": len(problems) - synced}
+
+
+# ── To-do backlog ───────────────────────────────────────────────────────────
+
+
+def _normalize_slug(raw: str) -> str:
+    """Extract a bare problem slug from a slug or a full LeetCode URL."""
+    s = raw.strip()
+    if "problems/" in s:
+        s = s.split("problems/", 1)[1]
+    return s.strip("/").split("/")[0].split("?")[0].lower()
+
+
+async def _fetch_problem_detail(slug: str) -> dict | None:
+    """Resolve a problem slug to {leetcode_id, title, slug, difficulty, topics}."""
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        r = await c.post(
+            "https://leetcode.com/graphql/",
+            json={"query": _PROBLEM_DETAIL_QUERY, "variables": {"titleSlug": slug}},
+            headers={"Content-Type": "application/json", "User-Agent": _UA},
+        )
+        q = r.json().get("data", {}).get("question")
+        if not q:
+            return None
+        return {
+            "leetcode_id": int(q["questionFrontendId"]),
+            "title": q["title"],
+            "slug": slug,
+            "difficulty": q["difficulty"].lower(),
+            "topics": [t["name"] for t in q.get("topicTags", [])],
+        }
+
+
+async def _upsert_problem(
+    db: AsyncSession, *, leetcode_id: int, title: str, slug: str, difficulty: str, topics: list[str]
+) -> LeetCodeProblem:
+    """Find the shared problem row by leetcode_id, creating it if absent."""
+    result = await db.execute(
+        select(LeetCodeProblem).where(LeetCodeProblem.leetcode_id == leetcode_id)
+    )
+    problem = result.scalar_one_or_none()
+    if not problem:
+        problem = LeetCodeProblem(
+            leetcode_id=leetcode_id, title=title, slug=slug, difficulty=difficulty, topics=topics
+        )
+        db.add(problem)
+        await db.flush()
+    return problem
+
+
+async def get_todos(db: AsyncSession, user: User) -> list[LeetCodeTodo]:
+    result = await db.execute(
+        select(LeetCodeTodo)
+        .where(LeetCodeTodo.user_id == user.id)
+        .options(selectinload(LeetCodeTodo.problem))
+        .order_by(LeetCodeTodo.position, LeetCodeTodo.added_at)
+    )
+    todos = list(result.scalars().all())
+
+    # A to-do is "done" if a solve exists for its problem — derived, not stored,
+    # so it self-corrects and needs no extra column.
+    if todos:
+        solved = await db.execute(
+            select(LeetCodeSolve.problem_id)
+            .where(
+                LeetCodeSolve.user_id == user.id,
+                LeetCodeSolve.problem_id.in_([t.problem_id for t in todos]),
+            )
+            .distinct()
+        )
+        solved_ids = set(solved.scalars().all())
+        for t in todos:
+            t.done = t.problem_id in solved_ids
+
+    return todos
+
+
+async def _has_solve(db: AsyncSession, user: User, problem_id: int) -> bool:
+    result = await db.execute(
+        select(LeetCodeSolve.id)
+        .where(LeetCodeSolve.user_id == user.id, LeetCodeSolve.problem_id == problem_id)
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+# ── To-do lists ─────────────────────────────────────────────────────────────
+
+async def get_todo_lists(db: AsyncSession, user: User) -> list[LeetCodeTodoList]:
+    result = await db.execute(
+        select(LeetCodeTodoList)
+        .where(LeetCodeTodoList.user_id == user.id)
+        .order_by(LeetCodeTodoList.position, LeetCodeTodoList.id)
+    )
+    return list(result.scalars().all())
+
+
+async def _resolve_list(db: AsyncSession, user: User, list_id: int | None) -> LeetCodeTodoList | None:
+    """Null = the built-in Backlog; otherwise the list must belong to the user."""
+    if list_id is None:
+        return None
+    result = await db.execute(
+        select(LeetCodeTodoList).where(
+            LeetCodeTodoList.user_id == user.id, LeetCodeTodoList.id == list_id
+        )
+    )
+    lst = result.scalar_one_or_none()
+    if not lst:
+        raise ValueError("List not found")
+    return lst
+
+
+async def _next_position(db: AsyncSession, user: User, list_id: int | None) -> int:
+    result = await db.execute(
+        select(func.max(LeetCodeTodo.position)).where(
+            LeetCodeTodo.user_id == user.id, LeetCodeTodo.list_id == list_id
+        )
+    )
+    current_max = result.scalar()
+    return 0 if current_max is None else current_max + 1
+
+
+async def create_todo_list(db: AsyncSession, user: User, name: str) -> LeetCodeTodoList:
+    name = name.strip()
+    if not name:
+        raise ValueError("List name can't be empty")
+    existing = await db.execute(
+        select(LeetCodeTodoList.id).where(
+            LeetCodeTodoList.user_id == user.id,
+            func.lower(LeetCodeTodoList.name) == name.lower(),
+        ).limit(1)
+    )
+    if existing.scalar_one_or_none():
+        raise ValueError("You already have a list with that name")
+    max_pos = await db.execute(
+        select(func.max(LeetCodeTodoList.position)).where(LeetCodeTodoList.user_id == user.id)
+    )
+    lst = LeetCodeTodoList(user_id=user.id, name=name, position=(max_pos.scalar() or 0) + 1)
+    db.add(lst)
+    await db.flush()
+    return lst
+
+
+async def rename_todo_list(db: AsyncSession, user: User, list_id: int, name: str) -> LeetCodeTodoList:
+    lst = await _resolve_list(db, user, list_id)
+    name = name.strip()
+    if not name:
+        raise ValueError("List name can't be empty")
+    clash = await db.execute(
+        select(LeetCodeTodoList.id).where(
+            LeetCodeTodoList.user_id == user.id,
+            func.lower(LeetCodeTodoList.name) == name.lower(),
+            LeetCodeTodoList.id != list_id,
+        ).limit(1)
+    )
+    if clash.scalar_one_or_none():
+        raise ValueError("You already have a list with that name")
+    lst.name = name
+    return lst
+
+
+async def delete_todo_list(db: AsyncSession, user: User, list_id: int) -> None:
+    lst = await _resolve_list(db, user, list_id)
+    # Explicit delete: SQLite dev doesn't enforce the FK cascade.
+    await db.execute(
+        delete(LeetCodeTodo).where(
+            LeetCodeTodo.user_id == user.id, LeetCodeTodo.list_id == list_id
+        )
+    )
+    await db.delete(lst)
+
+
+# ── To-dos ──────────────────────────────────────────────────────────────────
+
+async def add_todo(db: AsyncSession, user: User, payload: LeetCodeTodoCreate) -> LeetCodeTodo:
+    problem = await _upsert_problem(
+        db,
+        leetcode_id=payload.leetcode_id,
+        title=payload.title,
+        slug=payload.slug,
+        difficulty=payload.difficulty,
+        topics=payload.topics,
+    )
+    await _resolve_list(db, user, payload.list_id)
+
+    existing = await db.execute(
+        select(LeetCodeTodo).where(
+            LeetCodeTodo.user_id == user.id, LeetCodeTodo.problem_id == problem.id
+        )
+    )
+    todo = existing.scalar_one_or_none()
+    if not todo:
+        todo = LeetCodeTodo(
+            user_id=user.id,
+            problem_id=problem.id,
+            list_id=payload.list_id,
+            position=await _next_position(db, user, payload.list_id),
+        )
+        db.add(todo)
+        await db.flush()
+    elif todo.list_id != payload.list_id:
+        # Re-adding moves it to the requested list (appended at the end).
+        todo.list_id = payload.list_id
+        todo.position = await _next_position(db, user, payload.list_id)
+
+    result = await db.execute(
+        select(LeetCodeTodo)
+        .where(LeetCodeTodo.id == todo.id)
+        .options(selectinload(LeetCodeTodo.problem))
+    )
+    fresh = result.scalar_one()
+    # Already-solved problems are welcome — they just show up pre-checked.
+    fresh.done = await _has_solve(db, user, problem.id)
+    return fresh
+
+
+async def remove_todo(db: AsyncSession, user: User, problem_id: int) -> None:
+    result = await db.execute(
+        select(LeetCodeTodo).where(
+            LeetCodeTodo.user_id == user.id, LeetCodeTodo.problem_id == problem_id
+        )
+    )
+    todo = result.scalar_one_or_none()
+    if not todo:
+        raise ValueError("Not on your to-do list")
+    await db.delete(todo)
+
+
+async def move_todo_to_list(db: AsyncSession, user: User, problem_id: int, list_id: int | None) -> None:
+    """Move a single to-do into another list (null = Backlog), appended at the end."""
+    await _resolve_list(db, user, list_id)
+    result = await db.execute(
+        select(LeetCodeTodo).where(
+            LeetCodeTodo.user_id == user.id, LeetCodeTodo.problem_id == problem_id
+        )
+    )
+    todo = result.scalar_one_or_none()
+    if not todo:
+        raise ValueError("Not on your to-do list")
+    if todo.list_id == list_id:
+        return
+    todo.list_id = list_id
+    todo.position = await _next_position(db, user, list_id)
+
+
+async def reorder_todos(db: AsyncSession, user: User, list_id: int | None, problem_ids: list[int]) -> None:
+    """Persist a manual ordering for one list; unmentioned todos keep their relative order after."""
+    await _resolve_list(db, user, list_id)
+    result = await db.execute(
+        select(LeetCodeTodo).where(
+            LeetCodeTodo.user_id == user.id, LeetCodeTodo.list_id == list_id
+        )
+    )
+    by_pid = {t.problem_id: t for t in result.scalars().all()}
+    pos = 0
+    for pid in problem_ids:
+        todo = by_pid.pop(pid, None)
+        if todo:
+            todo.position = pos
+            pos += 1
+    for todo in sorted(by_pid.values(), key=lambda t: t.position):
+        todo.position = pos
+        pos += 1
+
+
+async def import_todos_by_slugs(
+    db: AsyncSession, user: User, raw_slugs: list[str], list_id: int | None = None
+) -> dict:
+    """Bulk-add problems from pasted slugs or LeetCode URLs. Solved problems
+    are added too (they arrive pre-checked); only duplicates are skipped."""
+    await _resolve_list(db, user, list_id)
+    slugs: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_slugs:
+        s = _normalize_slug(raw)
+        if s and s not in seen:
+            seen.add(s)
+            slugs.append(s)
+    if not slugs:
+        return {"added": 0, "skipped": 0, "failed": 0}
+
+    semaphore = asyncio.Semaphore(5)
+
+    async def _one(slug: str) -> dict | None:
+        async with semaphore:
+            try:
+                return await _fetch_problem_detail(slug)
+            except Exception:
+                return None
+
+    details = await asyncio.gather(*[_one(s) for s in slugs])
+
+    added = skipped = failed = 0
+    next_pos = await _next_position(db, user, list_id)
+    for det in details:
+        if not det:
+            failed += 1
+            continue
+        problem = await _upsert_problem(db, **det)
+        existing = await db.execute(
+            select(LeetCodeTodo.id).where(
+                LeetCodeTodo.user_id == user.id, LeetCodeTodo.problem_id == problem.id
+            ).limit(1)
+        )
+        if existing.scalar_one_or_none():
+            skipped += 1
+            continue
+        db.add(LeetCodeTodo(user_id=user.id, problem_id=problem.id, list_id=list_id, position=next_pos))
+        next_pos += 1
+        added += 1
+
+    return {"added": added, "skipped": skipped, "failed": failed}

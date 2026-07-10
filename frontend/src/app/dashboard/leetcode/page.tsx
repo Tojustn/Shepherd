@@ -30,8 +30,13 @@ import {
 import {
   Code2, Search, Plus, ChevronDown, ChevronUp,
   X, Check, Loader2, Pencil, ArrowUp, ArrowDown, SlidersHorizontal, Trash2, ExternalLink, Download, Upload, MoreHorizontal,
-  Eye, SkipForward, Sparkles, Brain, HelpCircle, Timer, Zap,
+  Eye, SkipForward, Sparkles, Brain, HelpCircle, Timer, Zap, BarChart3, PieChart as PieChartIcon, RefreshCw, ListTodo, GripVertical, Archive,
 } from "lucide-react";
+import {
+  PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+} from "recharts";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -83,9 +88,34 @@ interface ReviewDueItem {
   imported_only: boolean;
 }
 
+interface ReviewStats {
+  done_today: number;
+  box_counts: Record<string, number>;
+  active: number;
+  graduated: number;
+  due_now: number;
+  due_tomorrow: number;
+  due_week: number;
+}
+
+interface TodoList {
+  id: number;
+  name: string;
+  position: number;
+}
+
+interface TodoItem {
+  id: number;
+  problem: Problem;
+  added_at: string;
+  list_id: number | null; // null = Backlog
+  position: number;
+  done: boolean;
+}
+
 // ── Query Builder Types ────────────────────────────────────────────────────
 
-type Field    = "difficulty" | "language" | "confidence" | "topic" | "solveCount" | "imported";
+type Field    = "difficulty" | "language" | "confidence" | "topic" | "solveCount" | "imported" | "date";
 type Operator = "is" | "is_not" | "gte" | "lte" | "includes" | "excludes";
 
 interface FilterRule {
@@ -115,25 +145,50 @@ const DIFF_XP: Record<string, number> = { easy: 20, medium: 40, hard: 80 };
 const BOX_DAYS: Record<number, number> = { 1: 1, 2: 3, 3: 7, 4: 21, 5: 60 };
 const MAX_BOX = 5;
 
-// How many reviews to surface per day before suggesting a stop — keeps a large
-// backlog from becoming an unmanageable wall. Soft cap; you can keep going.
-const DAILY_REVIEW_GOAL = 15;
+// Default daily review goal — deliberately modest, since low-box reviews are
+// full re-solves. Adjustable in the Review header; persisted per browser.
+const DEFAULT_REVIEW_GOAL = 8;
+const REVIEW_GOAL_CHOICES = [5, 8, 12, 15, 20];
+
+function useDailyGoal(): [number, (n: number) => void] {
+  const [goal, setGoal] = useState(DEFAULT_REVIEW_GOAL);
+  useEffect(() => {
+    const raw = localStorage.getItem("lc-review-goal");
+    if (raw && Number(raw) > 0) setGoal(Number(raw));
+  }, []);
+  const update = (n: number) => {
+    setGoal(n);
+    localStorage.setItem("lc-review-goal", String(n));
+  };
+  return [goal, update];
+}
 // At/above this box, review by blueprinting the approach (~3 min) instead of
 // coding from scratch — old problems become a fast warm-up, not a 20-min slog.
 // Box 3 (7-day mark) and up speed-run; boxes 1–2 still code from scratch.
 const SPEEDRUN_BOX = 3;
 
-function reviewDoneKey(): string {
-  return `lc-review-done-${new Date().toISOString().slice(0, 10)}`;
+// Rough re-solve minutes by difficulty. These are REVIEW times, not fresh-solve
+// times — you've solved the problem before, so recall + rewrite is much faster.
+const REVIEW_RESOLVE_MINUTES: Record<string, number> = { easy: 8, medium: 15, hard: 25 };
+
+/** Rough minutes for one review: high boxes ~3-min blueprints, low boxes a re-solve. */
+function reviewMinutes(i: ReviewDueItem): number {
+  if (!i.imported_only && i.box >= SPEEDRUN_BOX) return 4;
+  return REVIEW_RESOLVE_MINUTES[i.problem.difficulty.toLowerCase()] ?? 15;
 }
-function getReviewDoneToday(): number {
-  if (typeof window === "undefined") return 0;
-  return Number(localStorage.getItem(reviewDoneKey()) ?? "0");
+function fmtMinutes(m: number): string {
+  if (m < 60) return `~${m}m`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `~${h}h ${r.toString().padStart(2, "0")}m` : `~${h}h`;
 }
-function bumpReviewDoneToday(): number {
-  const n = getReviewDoneToday() + 1;
-  localStorage.setItem(reviewDoneKey(), String(n));
-  return n;
+
+/** Compact overdue label for queue rows ("today", "3d", "2mo"). */
+function shortOverdue(dateStr: string): string {
+  const d = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+  if (d <= 0) return "today";
+  if (d < 30) return `${d}d`;
+  if (d < 365) return `${Math.floor(d / 30)}mo`;
+  return `${Math.floor(d / 365)}y`;
 }
 
 /** Boxes a passing review advances: a flawless "Mastered" (5) fast-tracks +2. */
@@ -224,6 +279,7 @@ const FIELD_LABELS: Record<Field, string> = {
   topic:      "Topic",
   solveCount: "Solve Count",
   imported:   "Imported",
+  date:       "Solved Date",
 };
 
 const FIELD_OPERATORS: Record<Field, { op: Operator; label: string }[]> = {
@@ -254,6 +310,10 @@ const FIELD_OPERATORS: Record<Field, { op: Operator; label: string }[]> = {
     { op: "is",     label: "is"     },
     { op: "is_not", label: "is not" },
   ],
+  date: [
+    { op: "gte", label: "on/after"  },
+    { op: "lte", label: "on/before" },
+  ],
 };
 
 function defaultOperator(field: Field): Operator {
@@ -268,6 +328,7 @@ function defaultValue(field: Field, availableLanguages: string[], availableTopic
     case "topic":      return availableTopics[0] ?? "";
     case "solveCount": return 1;
     case "imported":   return "true";
+    case "date":       return new Date().toISOString().slice(0, 10);
   }
 }
 
@@ -448,6 +509,17 @@ function evaluateRule(rule: FilterRule, g: SolveGroup): boolean {
       const want = rule.value === "true";
       return rule.operator === "is" ? allImported === want : allImported !== want;
     }
+    case "date": {
+      const v = String(rule.value);
+      if (!v) return true;
+      const recent = g.solves[g.solves.length - 1];
+      if (!recent) return false;
+      const d = new Date(recent.solved_at);
+      const solveDay = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (rule.operator === "gte") return solveDay >= v; // solved on/after
+      if (rule.operator === "lte") return solveDay <= v; // solved on/before
+      return true;
+    }
   }
 }
 
@@ -566,6 +638,16 @@ function FilterRuleRow({ rule, onChange, onRemove, availableLanguages, available
             <option value="true">Yes</option>
             <option value="false">No</option>
           </select>
+        );
+      case "date":
+        return (
+          <input
+            type="date"
+            value={String(rule.value)}
+            max={new Date().toISOString().slice(0, 10)}
+            onChange={e => onChange({ ...rule, value: e.target.value })}
+            className="input input-bordered input-xs"
+          />
         );
     }
   }
@@ -832,19 +914,20 @@ function NotesField({ value, onChange, minRows = 4, label = "Notes" }: {
   );
 }
 
-function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => void }) {
+function LogSolveForm({ token, onSuccess, initial }: { token: string; onSuccess: (solved?: SearchResult) => void; initial?: SearchResult | null }) {
   const { theme }   = useTheme();
   const queryClient = useQueryClient();
 
   const draft = (() => {
+    if (initial) return {};  // seeded from a to-do item — ignore the saved draft
     try { return JSON.parse(localStorage.getItem(LC_DRAFT_KEY) ?? "{}"); }
     catch { return {}; }
   })();
 
-  const [query,      setQuery]      = useState(draft.query      ?? "");
+  const [query,      setQuery]      = useState(initial ? initial.title : (draft.query ?? ""));
   const [results,    setResults]    = useState<SearchResult[]>([]);
   const [searching,  setSearching]  = useState(false);
-  const [selected,   setSelected]   = useState<SearchResult | null>(draft.selected ?? null);
+  const [selected,   setSelected]   = useState<SearchResult | null>(initial ?? draft.selected ?? null);
   const [showDrop,   setShowDrop]   = useState(false);
   const [language,   setLanguage]   = useState(draft.language   ?? "Python");
   const [timeC,      setTimeC]      = useState(draft.timeC      ?? "");
@@ -939,7 +1022,7 @@ function LogSolveForm({ token, onSuccess }: { token: string; onSuccess: () => vo
     },
     onSuccess: () => {
       toast.success("Solve logged!");
-      onSuccess();
+      onSuccess(selected ?? undefined);
       clear();
     },
     onSettled: () => {
@@ -1756,20 +1839,23 @@ function SpeedRunTimer() {
   );
 }
 
-function ReviewCard({ item, token, onLogged, onSkip }: {
-  item: ReviewDueItem; token: string; onLogged: () => void; onSkip: () => void;
+function ReviewCard({ item, token, snoozes, onLogged, onSkip }: {
+  item: ReviewDueItem; token: string; snoozes: boolean; onLogged: () => void; onSkip: () => void;
 }) {
   const { theme } = useTheme();
   const [revealed,   setRevealed]   = useState(false);
+  const [showCode,   setShowCode]   = useState(false);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [showUpdate, setShowUpdate] = useState(false);
+  const [saveMode,   setSaveMode]   = useState<"new" | "edit">("new");
   const [language,   setLanguage]   = useState(item.last_solve?.language ?? "Python");
   const [timeC,      setTimeC]      = useState("");
   const [spaceC,     setSpaceC]     = useState("");
   const [notes,      setNotes]      = useState("");
   const [code,       setCode]       = useState("");
 
-  const prev   = item.last_solve;
+  const prev    = item.last_solve;
+  const canEdit = !!prev && !item.imported_only; // there's a real solution to edit
   const diff   = item.problem.difficulty.toLowerCase();
   const diffC  = DIFF_COLORS[diff] ?? DIFF_COLORS.medium;
   const nextBox  = confidence != null ? predictBox(item.box, confidence) : null;
@@ -1779,8 +1865,41 @@ function ReviewCard({ item, token, onLogged, onSkip }: {
   const graduated = !item.imported_only && passed &&
     item.box + passIncrement(confidence ?? 0) > MAX_BOX;
 
+  // Switch between logging a fresh re-solve and editing the original in place.
+  function chooseMode(m: "new" | "edit") {
+    setSaveMode(m);
+    if (m === "edit" && prev) {
+      setLanguage(prev.language ?? "Python");
+      setTimeC(prev.time_complexity ?? "");
+      setSpaceC(prev.space_complexity ?? "");
+      setNotes(prev.notes ?? "");
+      setCode(prev.code ?? "");
+      setShowUpdate(true);
+    } else {
+      setTimeC(""); setSpaceC(""); setNotes(""); setCode("");
+    }
+  }
+
   const { mutate: logReview, isPending } = useMutation<Solve, Error>({
     mutationFn: async () => {
+      // Edit the original solution in place — still reschedules via from_review.
+      if (saveMode === "edit" && prev) {
+        const r = await authFetch(`${API_URL}/api/leetcode/solves/${prev.id}`, token, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            language:         language || null,
+            code:             code || null,
+            notes:            notes || null,
+            confidence,
+            time_complexity:  timeC  || null,
+            space_complexity: spaceC || null,
+            from_review: true,
+          }),
+        });
+        if (!r.ok) throw new Error((await r.json()).detail ?? "Something went wrong");
+        return r.json();
+      }
       const r = await authFetch(`${API_URL}/api/leetcode/solves`, token, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1813,6 +1932,52 @@ function ReviewCard({ item, token, onLogged, onSkip }: {
     },
     onError: (err) => toast.error(err.message),
   });
+
+  // Keyboard shortcuts — inert while typing in any field or the code editor.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("input, textarea, select, [contenteditable='true'], .cm-editor, dialog")) return;
+      if (e.key >= "1" && e.key <= "5") setConfidence(Number(e.key));
+      else if (e.key === "n" || e.key === "N") setRevealed(v => !v);
+      else if ((e.key === "c" || e.key === "C") && prev?.code) setShowCode(v => !v);
+      else if (e.key === "s" || e.key === "S") onSkip();
+      else if (e.key === "Enter" && confidence != null && !isPending) logReview();
+      else return;
+      e.preventDefault();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confidence, isPending, prev?.code, onSkip, logReview]);
+
+  const solutionEditor = (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-3 gap-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-black text-base-content/40">Language</label>
+          <select value={language} onChange={e => setLanguage(e.target.value)} className="select select-bordered select-sm w-full">
+            {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-black text-base-content/40">Time</label>
+          <input value={timeC} onChange={e => setTimeC(e.target.value)} placeholder="O(n log n)" className="input input-bordered input-sm w-full font-mono" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-black text-base-content/40">Space</label>
+          <input value={spaceC} onChange={e => setSpaceC(e.target.value)} placeholder="O(n)" className="input input-bordered input-sm w-full font-mono" />
+        </div>
+      </div>
+      <NotesField value={notes} onChange={setNotes} minRows={3} />
+      <div className="rounded-xl overflow-hidden border border-base-300">
+        <CodeMirror value={code} onChange={setCode} extensions={cmExtensions(language)}
+          theme={theme === "dark" ? githubDark : githubLight}
+          basicSetup={{ lineNumbers: true, foldGutter: false, autocompletion: false }}
+          style={{ fontSize: "13px", minHeight: "120px" }} />
+      </div>
+    </div>
+  );
 
   return (
     <div className="rounded-2xl bg-base-100 border-2 border-base-300 overflow-hidden"
@@ -1872,19 +2037,31 @@ function ReviewCard({ item, token, onLogged, onSkip }: {
         </div>
       )}
 
-      {/* Reveal previous solution (toggle) */}
+      {/* Reveal previous notes / solution — notes first, code behind its own toggle */}
       <div className="px-6 py-4 border-b border-base-300/60 flex flex-col gap-3">
-        <button
-          onClick={() => setRevealed(v => !v)}
-          className="btn btn-sm btn-ghost gap-2 self-start font-bold text-base-content/50 hover:text-base-content/80 border border-base-300"
-        >
-          <Eye size={14} /> {revealed ? "Hide my previous solution" : "Reveal my previous solution"}
-          {revealed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setRevealed(v => !v)}
+            className="btn btn-sm btn-ghost gap-2 font-bold text-base-content/50 hover:text-base-content/80 border border-base-300"
+          >
+            <Eye size={14} /> {revealed ? "Hide my notes" : "Reveal my notes"}
+            {revealed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          </button>
+          {prev?.code && (
+            <button
+              onClick={() => setShowCode(v => !v)}
+              className="btn btn-sm btn-ghost gap-2 font-bold text-base-content/50 hover:text-base-content/80 border border-base-300"
+            >
+              <Code2 size={14} /> {showCode ? "Hide solution" : "Reveal solution"}
+              {showCode ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+          )}
+        </div>
+
         {revealed && (
-          prev && (prev.code || prev.notes || prev.time_complexity || prev.space_complexity) ? (
+          prev && (prev.notes || prev.time_complexity || prev.space_complexity) ? (
             <div className="flex flex-col gap-3">
-              <p className="text-[10px] font-black text-base-content/30 uppercase tracking-wider">Your previous solution</p>
+              <p className="text-[10px] font-black text-base-content/30 uppercase tracking-wider">Your notes</p>
               {(prev.time_complexity || prev.space_complexity) && (
                 <div className="flex gap-6">
                   {prev.time_complexity && (
@@ -1897,25 +2074,31 @@ function ReviewCard({ item, token, onLogged, onSkip }: {
                   )}
                 </div>
               )}
-              {prev.notes && (
+              {prev.notes ? (
                 <div className="markdown-notes prose prose-sm max-w-none text-base-content/70">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{prev.notes}</ReactMarkdown>
                 </div>
-              )}
-              {prev.code && (
-                <div className="rounded-xl overflow-hidden">
-                  <SyntaxHighlighter language={hljsLang(prev.language)}
-                    style={theme === "dark" ? atomOneDark : atomOneLight}
-                    customStyle={{ margin: 0, borderRadius: "0.75rem", fontSize: "13px", lineHeight: "1.7", padding: "1.25rem" }}
-                    showLineNumbers wrapLongLines={false}>
-                    {prev.code}
-                  </SyntaxHighlighter>
-                </div>
+              ) : (
+                <p className="text-xs font-semibold text-base-content/35 italic">No notes recorded — just complexity.</p>
               )}
             </div>
           ) : (
-            <p className="text-xs font-semibold text-base-content/35 italic">No previous solution recorded for this problem.</p>
+            <p className="text-xs font-semibold text-base-content/35 italic">No notes recorded for this problem.</p>
           )
+        )}
+
+        {showCode && prev?.code && (
+          <div className="flex flex-col gap-2">
+            <p className="text-[10px] font-black text-base-content/30 uppercase tracking-wider">Your solution</p>
+            <div className="rounded-xl overflow-hidden">
+              <SyntaxHighlighter language={hljsLang(prev.language)}
+                style={theme === "dark" ? atomOneDark : atomOneLight}
+                customStyle={{ margin: 0, borderRadius: "0.75rem", fontSize: "13px", lineHeight: "1.7", padding: "1.25rem" }}
+                showLineNumbers wrapLongLines={false}>
+                {prev.code}
+              </SyntaxHighlighter>
+            </div>
+          </div>
         )}
       </div>
 
@@ -1939,37 +2122,35 @@ function ReviewCard({ item, token, onLogged, onSkip }: {
           )}
         </div>
 
-        <button onClick={() => setShowUpdate(v => !v)}
-          className="btn btn-xs btn-ghost self-start gap-1.5 font-bold text-base-content/40 hover:text-base-content/70">
-          <Plus size={11} /> {showUpdate ? "Hide updated solution" : "Record an updated solution (optional)"}
-          {showUpdate ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-        </button>
-        {showUpdate && (
-          <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-3 gap-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-black text-base-content/40">Language</label>
-                <select value={language} onChange={e => setLanguage(e.target.value)} className="select select-bordered select-sm w-full">
-                  {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-black text-base-content/40">Time</label>
-                <input value={timeC} onChange={e => setTimeC(e.target.value)} placeholder="O(n log n)" className="input input-bordered input-sm w-full font-mono" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-black text-base-content/40">Space</label>
-                <input value={spaceC} onChange={e => setSpaceC(e.target.value)} placeholder="O(n)" className="input input-bordered input-sm w-full font-mono" />
-              </div>
-            </div>
-            <NotesField value={notes} onChange={setNotes} minRows={3} />
-            <div className="rounded-xl overflow-hidden border border-base-300">
-              <CodeMirror value={code} onChange={setCode} extensions={cmExtensions(language)}
-                theme={theme === "dark" ? githubDark : githubLight}
-                basicSetup={{ lineNumbers: true, foldGutter: false, autocompletion: false }}
-                style={{ fontSize: "13px", minHeight: "120px" }} />
-            </div>
+        {canEdit && (
+          <div className="flex items-center rounded-lg border border-base-300 overflow-hidden self-start text-[11px] font-black">
+            {(["new", "edit"] as const).map(m => (
+              <button
+                key={m}
+                onClick={() => chooseMode(m)}
+                className={`px-2.5 py-1 transition-colors ${
+                  saveMode === m
+                    ? "bg-primary text-primary-content"
+                    : "bg-base-100 text-base-content/40 hover:text-base-content/70"
+                }`}
+              >
+                {m === "new" ? "New re-solve" : "Edit original"}
+              </button>
+            ))}
           </div>
+        )}
+
+        {saveMode === "edit" ? (
+          solutionEditor
+        ) : (
+          <>
+            <button onClick={() => setShowUpdate(v => !v)}
+              className="btn btn-xs btn-ghost self-start gap-1.5 font-bold text-base-content/40 hover:text-base-content/70">
+              <Plus size={11} /> {showUpdate ? "Hide updated solution" : "Record an updated solution (optional)"}
+              {showUpdate ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+            </button>
+            {showUpdate && solutionEditor}
+          </>
         )}
 
         <div className="flex gap-2">
@@ -1980,18 +2161,25 @@ function ReviewCard({ item, token, onLogged, onSkip }: {
             style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}
           >
             {isPending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-            {confidence == null ? "Rate to reschedule" : "Log review"}
+            {confidence == null ? "Rate to reschedule" : saveMode === "edit" ? "Update & reschedule" : "Log review"}
           </button>
-          <button onClick={onSkip} className="btn btn-sm btn-ghost font-black gap-1.5 text-base-content/50">
-            <SkipForward size={13} /> Skip
+          <button
+            onClick={onSkip}
+            title={snoozes ? "Push to tomorrow — it leaves today's queue" : "Show the next problem"}
+            className="btn btn-sm btn-ghost font-black gap-1.5 text-base-content/50"
+          >
+            <SkipForward size={13} /> {snoozes ? "Snooze 1d" : "Next"}
           </button>
         </div>
+        <p className="text-[10px] font-semibold text-base-content/25 text-center select-none">
+          1–5 rate · N notes · C code · S {snoozes ? "snooze" : "next"} · Enter log
+        </p>
       </div>
     </div>
   );
 }
 
-function ReviewHelp() {
+function ReviewHelp({ goal }: { goal: number }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -2060,13 +2248,19 @@ function ReviewHelp() {
             straight from the top).
           </p>
           <p className="text-[11px] text-base-content/45 leading-relaxed">
-            We surface about <span className="font-bold">{DAILY_REVIEW_GOAL} a day</span> so a big
-            backlog stays a warm-up, not a wall.
+            Each day you get a plan of <span className="font-bold">{goal}</span> (adjustable in the
+            header) — lowest boxes and most overdue first. A big pile-up can be spread across the
+            coming days with one click, and the queue&apos;s <Archive size={10} className="inline" /> archives
+            problems you never want to review.
           </p>
           <p className="text-[11px] text-base-content/45 leading-relaxed">
             Pass a <span className="font-bold">Box {MAX_BOX}</span> problem in review and it
             <span className="font-bold"> graduates 🎓</span> — archived out of the queue (your data stays;
             re-solve it anytime to bring it back).
+          </p>
+          <p className="text-[11px] text-base-content/45 leading-relaxed">
+            <span className="font-bold">Snooze</span> pushes a problem to tomorrow without
+            touching its box — for &quot;not today&quot;, guilt-free.
           </p>
           <p className="text-[11px] text-base-content/45 leading-relaxed pt-1 border-t border-base-300">
             <span className="font-bold">Include imported</span> also surfaces problems you imported
@@ -2093,18 +2287,204 @@ function ImportedToggle({ value, onChange }: { value: boolean; onChange: (v: boo
   );
 }
 
-function ReviewQueue({ items, isLoading, token, includeImported, onToggleImported, onChanged }: {
-  items: ReviewDueItem[]; isLoading: boolean; token: string;
+function QueueList({ items, activeId, laterCount, showAll, onToggleShowAll, onSelect, onArchive }: {
+  items: ReviewDueItem[]; activeId: number; laterCount: number; showAll: boolean;
+  onToggleShowAll: () => void; onSelect: (id: number) => void; onArchive: (id: number) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-base-300 bg-base-200/30 p-2 flex flex-col gap-1 lg:max-h-[38rem] lg:overflow-y-auto">
+      <p className="px-2 pt-1 pb-0.5 text-[10px] font-black uppercase tracking-wider text-base-content/35">
+        {showAll ? "Full queue" : "Today's plan"} · {items.length}
+        <span className="normal-case font-bold text-base-content/25"> · {fmtMinutes(items.reduce((m, i) => m + reviewMinutes(i), 0))}</span>
+      </p>
+      {items.map((i, n) => {
+        const active = i.problem.id === activeId;
+        const c = DIFF_COLORS[i.problem.difficulty.toLowerCase()] ?? DIFF_COLORS.medium;
+        return (
+          <div
+            key={i.problem.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onSelect(i.problem.id)}
+            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(i.problem.id); } }}
+            className={`group flex items-center gap-2 px-2.5 py-2 rounded-xl border text-left cursor-pointer transition-colors ${
+              active ? "bg-base-100 border-[var(--game-accent)]" : "border-transparent hover:bg-base-200/80"
+            }`}
+          >
+            <span className="font-mono text-[10px] text-base-content/25 w-4 text-right shrink-0">{n + 1}</span>
+            <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: c.text }} title={i.problem.difficulty} />
+            <span className={`flex-1 min-w-0 truncate text-xs font-bold ${active ? "text-base-content" : "text-base-content/70"}`}>
+              {i.problem.title}
+            </span>
+            {i.imported_only ? (
+              <span className="text-[9px] font-black uppercase tracking-wider text-base-content/30 shrink-0">imp</span>
+            ) : (
+              <>
+                <span className="text-[9px] font-black text-base-content/35 shrink-0 group-hover:hidden">B{i.box}</span>
+                <span className="text-[9px] font-semibold text-base-content/30 shrink-0 w-9 text-right group-hover:hidden">
+                  {shortOverdue(i.next_review_at)}
+                </span>
+                <button
+                  onClick={e => { e.stopPropagation(); onArchive(i.problem.id); }}
+                  className="hidden group-hover:flex shrink-0 p-1 rounded-md text-base-content/30 hover:text-error hover:bg-error/10 transition-colors"
+                  title="Stop reviewing this problem (re-solve it to bring it back)"
+                >
+                  <Archive size={12} />
+                </button>
+              </>
+            )}
+          </div>
+        );
+      })}
+      {(laterCount > 0 || showAll) && (
+        <button
+          onClick={onToggleShowAll}
+          className="mt-1 w-full py-1.5 rounded-lg border border-dashed border-base-300 text-[11px] font-bold text-base-content/40 hover:text-base-content/70 hover:border-base-content/30 transition-colors"
+        >
+          {showAll ? "Show today's plan only" : `+${laterCount} more waiting — show all`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PipelineStrip({ stats }: { stats?: ReviewStats }) {
+  if (!stats || (stats.active === 0 && stats.graduated === 0)) return null;
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <div className="flex items-stretch justify-center gap-2 flex-wrap">
+        {[1, 2, 3, 4, 5].map(b => (
+          <div key={b} className="flex flex-col items-center gap-0.5 rounded-xl border border-base-300 bg-base-200/40 px-3.5 py-2 min-w-[3.5rem]">
+            <span className="font-black text-sm text-base-content">{stats.box_counts[String(b)] ?? 0}</span>
+            <span className="text-[9px] font-black uppercase tracking-wider text-base-content/35">
+              Box {b}{b >= SPEEDRUN_BOX ? " ⚡" : ""}
+            </span>
+          </div>
+        ))}
+        <div className="flex flex-col items-center gap-0.5 rounded-xl border border-base-300 bg-base-200/40 px-3.5 py-2 min-w-[3.5rem]">
+          <span className="font-black text-sm" style={{ color: "#a78bfa" }}>{stats.graduated}</span>
+          <span className="text-[9px] font-black uppercase tracking-wider text-base-content/35">🎓 Grad</span>
+        </div>
+      </div>
+      {(stats.due_tomorrow > 0 || stats.due_week > 0) && (
+        <p className="text-[11px] font-bold text-base-content/40">
+          {stats.due_tomorrow > 0 && `${stats.due_tomorrow} due tomorrow`}
+          {stats.due_tomorrow > 0 && stats.due_week > 0 && " · "}
+          {stats.due_week > 0 && `${stats.due_week} due this week`}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ReviewQueue({ items, isLoading, token, stats, goal, onGoalChange, includeImported, onToggleImported, onChanged }: {
+  items: ReviewDueItem[]; isLoading: boolean; token: string; stats?: ReviewStats;
+  goal: number; onGoalChange: (n: number) => void;
   includeImported: boolean; onToggleImported: (v: boolean) => void; onChanged: () => void;
 }) {
-  const [index, setIndex] = useState(0);
-  const [doneToday, setDoneToday] = useState(0);
+  const queryClient = useQueryClient();
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [override, setOverride] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
-  useEffect(() => { setDoneToday(getReviewDoneToday()); }, []);
+  const doneToday = stats?.done_today ?? 0;
+
+  // Most fragile first: lowest box, then most overdue; imported backlog last.
+  const prioritized = useMemo(() => {
+    const scheduled = items
+      .filter(i => !i.imported_only)
+      .sort((a, b) =>
+        a.box - b.box ||
+        new Date(a.next_review_at).getTime() - new Date(b.next_review_at).getTime());
+    return [...scheduled, ...items.filter(i => i.imported_only)];
+  }, [items]);
+
+  // The day plan: only what's left of today's goal; the rest waits collapsed.
+  const planSize = Math.max(1, goal - doneToday);
+  const queueItems = showAll ? prioritized : prioritized.slice(0, planSize);
+  const laterCount = prioritized.length - Math.min(planSize, prioritized.length);
+  const scheduledDueCount = items.filter(i => !i.imported_only).length;
+
+  const item = prioritized.find(i => i.problem.id === selectedId) ?? queueItems[0];
+
+  const { mutate: snooze } = useMutation<void, Error, number>({
+    mutationFn: async (problemId) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/review/${problemId}/snooze`, token, { method: "POST" });
+      if (!r.ok && r.status !== 204) throw new Error("Couldn't snooze");
+    },
+    onMutate: async (problemId) => {
+      await queryClient.cancelQueries({ queryKey: ["leetcode", "review", includeImported] });
+      const previous = queryClient.getQueryData<ReviewDueItem[]>(["leetcode", "review", includeImported]);
+      queryClient.setQueryData<ReviewDueItem[]>(["leetcode", "review", includeImported], (old = []) =>
+        old.filter(i => i.problem.id !== problemId));
+      return { previous };
+    },
+    onSuccess: () => toast.success("😴 Snoozed — back tomorrow"),
+    onError: (_e, _v, ctx) => {
+      const c = ctx as { previous?: ReviewDueItem[] } | undefined;
+      if (c?.previous) queryClient.setQueryData(["leetcode", "review", includeImported], c.previous);
+      toast.error("Couldn't snooze");
+    },
+    onSettled: () => onChanged(),
+  });
+
+  const { mutate: archive } = useMutation<void, Error, number>({
+    mutationFn: async (problemId) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/review/${problemId}/archive`, token, { method: "POST" });
+      if (!r.ok && r.status !== 204) throw new Error("Couldn't archive");
+    },
+    onMutate: async (problemId) => {
+      await queryClient.cancelQueries({ queryKey: ["leetcode", "review", includeImported] });
+      const previous = queryClient.getQueryData<ReviewDueItem[]>(["leetcode", "review", includeImported]);
+      queryClient.setQueryData<ReviewDueItem[]>(["leetcode", "review", includeImported], (old = []) =>
+        old.filter(i => i.problem.id !== problemId));
+      return { previous };
+    },
+    onSuccess: () => toast.success("Archived — re-solve it anytime to bring it back"),
+    onError: (_e, _v, ctx) => {
+      const c = ctx as { previous?: ReviewDueItem[] } | undefined;
+      if (c?.previous) queryClient.setQueryData(["leetcode", "review", includeImported], c.previous);
+      toast.error("Couldn't archive");
+    },
+    onSettled: () => onChanged(),
+  });
+
+  const { mutate: rebalance, isPending: rebalancing } = useMutation<
+    { kept: number; moved: number; spread_days: number }, Error
+  >({
+    mutationFn: async () => {
+      const r = await authFetch(`${API_URL}/api/leetcode/review/rebalance?per_day=${goal}`, token, { method: "POST" });
+      if (!r.ok) throw new Error("Couldn't spread the backlog");
+      return r.json();
+    },
+    onSuccess: ({ kept, moved, spread_days }) => {
+      toast.success(`Kept ${kept} for today — spread ${moved} across the next ${spread_days} day${spread_days === 1 ? "" : "s"}`);
+      onChanged();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function advanceFrom(problemId: number) {
+    const idx = queueItems.findIndex(i => i.problem.id === problemId);
+    const next = queueItems[(idx + 1) % queueItems.length];
+    setSelectedId(next && next.problem.id !== problemId ? next.problem.id : null);
+  }
+
+  // Snooze pushes a scheduled problem to tomorrow (it leaves the queue);
+  // imported-only items have no schedule, so "skip" just moves to the next one.
+  function handleSkip() {
+    if (!item) return;
+    advanceFrom(item.problem.id);
+    if (!item.imported_only) snooze(item.problem.id);
+  }
+
+  function handleArchive(problemId: number) {
+    if (item && item.problem.id === problemId) advanceFrom(problemId);
+    archive(problemId);
+  }
 
   function handleLogged() {
-    setDoneToday(bumpReviewDoneToday());
+    setSelectedId(null); // fall back to the top of whatever remains
     onChanged();
   }
 
@@ -2113,9 +2493,20 @@ function ReviewQueue({ items, isLoading, token, includeImported, onToggleImporte
       <div className="flex items-center gap-2 flex-wrap">
         <Brain size={16} style={{ color: "var(--game-accent)" }} />
         <p className="font-black text-sm text-base-content">{title}</p>
-        <ReviewHelp />
+        <ReviewHelp goal={goal} />
         {extra}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-4">
+          <label className="flex items-center gap-1.5 text-[11px] font-bold text-base-content/50 cursor-pointer">
+            Goal
+            <select
+              value={goal}
+              onChange={e => onGoalChange(Number(e.target.value))}
+              className="select select-xs select-bordered font-bold"
+            >
+              {REVIEW_GOAL_CHOICES.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            /day
+          </label>
           <ImportedToggle value={includeImported} onChange={onToggleImported} />
         </div>
       </div>
@@ -2128,7 +2519,7 @@ function ReviewQueue({ items, isLoading, token, includeImported, onToggleImporte
 
   const progress = (
     <span className="text-xs font-bold">
-      <span style={{ color: "var(--game-accent)" }}>Today {doneToday}/{DAILY_REVIEW_GOAL}</span>
+      <span style={{ color: "var(--game-accent)" }}>Today {doneToday}/{goal}</span>
       {items.length > 0 && <span className="text-base-content/30"> · {items.length} due</span>}
     </span>
   );
@@ -2137,7 +2528,7 @@ function ReviewQueue({ items, isLoading, token, includeImported, onToggleImporte
     return (
       <div className="flex flex-col gap-4">
         {header("Review", progress)}
-        <div className="flex flex-col items-center gap-3 py-16 text-base-content/30">
+        <div className="flex flex-col items-center gap-6 py-16 text-base-content/30">
           <Sparkles size={40} style={{ color: "var(--game-accent)" }} />
           <div className="flex flex-col items-center gap-1">
             <p className="font-black text-sm text-base-content/60">All caught up</p>
@@ -2147,13 +2538,14 @@ function ReviewQueue({ items, isLoading, token, includeImported, onToggleImporte
                 : "No problems due for review. Toggle imports to drill ones you only imported."}
             </p>
           </div>
+          <PipelineStrip stats={stats} />
         </div>
       </div>
     );
   }
 
   // Daily cap: once you hit the goal, suggest stopping (you can override).
-  if (doneToday >= DAILY_REVIEW_GOAL && !override) {
+  if (doneToday >= goal && !override) {
     return (
       <div className="flex flex-col gap-4">
         {header("Review", progress)}
@@ -2172,24 +2564,1214 @@ function ReviewQueue({ items, isLoading, token, includeImported, onToggleImporte
           >
             <Zap size={13} /> Keep reviewing
           </button>
+          <PipelineStrip stats={stats} />
         </div>
       </div>
     );
   }
 
-  const safeIndex = Math.min(index, items.length - 1);
-  const item = items[safeIndex];
-
   return (
     <div className="flex flex-col gap-4">
       {header("Due for review", progress)}
-      <ReviewCard
-        key={item.problem.leetcode_id}
-        item={item}
-        token={token}
-        onLogged={handleLogged}
-        onSkip={() => setIndex(i => (i + 1) % items.length)}
-      />
+      {scheduledDueCount > goal * 2 && (
+        <div className="rounded-2xl border border-base-300 bg-base-200/40 px-4 py-3 flex items-center gap-3 flex-wrap">
+          <p className="text-xs font-semibold text-base-content/60 flex-1 min-w-[16rem]">
+            <span className="font-black text-base-content/80">{scheduledDueCount} problems due</span> — that&apos;s a
+            pile-up, not a plan. Keep today&apos;s {goal} most fragile and push the rest to the coming days.
+          </p>
+          <button
+            onClick={() => rebalance()}
+            disabled={rebalancing}
+            className="btn btn-sm font-black text-white border-none gap-1.5 shrink-0"
+            style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}
+          >
+            {rebalancing ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+            Spread it out
+          </button>
+        </div>
+      )}
+      <div className="grid gap-4 items-start lg:grid-cols-[minmax(0,1fr)_280px]">
+        <ReviewCard
+          key={item.problem.leetcode_id}
+          item={item}
+          token={token}
+          snoozes={!item.imported_only}
+          onLogged={handleLogged}
+          onSkip={handleSkip}
+        />
+        <QueueList
+          items={queueItems}
+          activeId={item.problem.id}
+          laterCount={laterCount}
+          showAll={showAll}
+          onToggleShowAll={() => setShowAll(v => !v)}
+          onSelect={setSelectedId}
+          onArchive={handleArchive}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Insights tab ────────────────────────────────────────────────────────────
+
+interface TopicStat {
+  topic: string;
+  count: number;              // problems tagged with this topic
+  rated: number;              // how many of those have a confidence score
+  avgConfidence: number | null;
+}
+
+/** Most recent confidence for a problem, skipping unrated attempts. */
+function latestConfidence(g: SolveGroup): number | null {
+  for (let i = g.solves.length - 1; i >= 0; i--) {
+    if (g.solves[i].confidence != null) return g.solves[i].confidence;
+  }
+  return null;
+}
+
+/** Map a 1–5 confidence average onto its nearest label color. */
+function confColor(v: number): string {
+  const rounded = Math.max(1, Math.min(5, Math.round(v)));
+  return CONFIDENCE_LABELS[rounded].color;
+}
+
+// Prominence ranking of the canonical interview patterns — algorithmic
+// techniques rank above data structures, which rank above generic buckets like
+// Array/String/Math. Used to pick which patterns headline the radar (the most
+// prominent ones you've practiced, not just the highest-volume). Reorder freely.
+const PATTERN_PRIORITY = [
+  "Dynamic Programming", "Backtracking", "Union Find", "Topological Sort",
+  "Shortest Path", "Trie", "Segment Tree", "Binary Indexed Tree",
+  "Monotonic Stack", "Sliding Window", "Two Pointers", "Binary Search",
+  "Divide and Conquer", "Greedy", "Depth-First Search", "Breadth-First Search",
+  "Graph", "Tree", "Heap (Priority Queue)", "Prefix Sum", "Bit Manipulation",
+  "Linked List", "Stack", "Queue", "Ordered Set", "Memoization", "Recursion",
+  "Matrix", "Hash Table", "Sorting", "Number Theory", "Combinatorics",
+  "Geometry", "Game Theory", "Simulation", "Counting", "Design", "Iterator",
+  "Interactive", "Math", "String", "Array",
+];
+const PATTERN_RANK: Record<string, number> = Object.fromEntries(
+  PATTERN_PRIORITY.map((t, i) => [t, i]),
+);
+
+// Distinct-enough palette for the topic pie; "Other" always gets the trailing gray.
+const PIE_COLORS = [
+  "#22c55e", "#3b82f6", "#f59e0b", "#a78bfa", "#ef4444",
+  "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#14b8a6",
+];
+
+interface PieRow { topic: string; count: number; pct: number; color: string; }
+
+/** Shared tooltip chrome for the recharts panels. */
+function TipBox({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div className="rounded-lg border border-base-300 bg-base-100 px-3 py-2 shadow-xl">
+      <p className="text-xs font-black text-base-content">{title}</p>
+      <p className="text-[11px] font-semibold text-base-content/60">{sub}</p>
+    </div>
+  );
+}
+
+function TopicPieTooltip({ active, payload }: { active?: boolean; payload?: { payload: PieRow }[] }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return <TipBox title={d.topic} sub={`${d.count} solved · ${d.pct.toFixed(1)}%`} />;
+}
+
+function ConfDistTooltip({ active, payload }: { active?: boolean; payload?: { payload: { label: string; count: number } }[] }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return <TipBox title={d.label} sub={`${d.count} problem${d.count === 1 ? "" : "s"}`} />;
+}
+
+function ConfDiffTooltip({ active, payload }: { active?: boolean; payload?: { payload: { difficulty: string; avg: number; n: number } }[] }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return <TipBox title={d.difficulty} sub={d.n ? `avg ${d.avg.toFixed(2)} · ${d.n} rated` : "no rated solves"} />;
+}
+
+function ConfRadarTooltip({ active, payload }: { active?: boolean; payload?: { payload: { topic: string; avg: number; count: number } }[] }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return <TipBox title={d.topic} sub={`avg ${d.avg.toFixed(2)} · ${d.count} solved`} />;
+}
+
+// Muted axis/grid tones that read on both light and dark themes.
+const AXIS_TICK = "#94a3b8";
+const GRID_STROKE = "#94a3b833";
+
+// ── Daily activity helpers ──────────────────────────────────────────────────
+
+const DAY_RANGES: { label: string; days: number | null }[] = [
+  { label: "30d", days: 30 },
+  { label: "90d", days: 90 },
+  { label: "1y",  days: 365 },
+  { label: "All", days: null },
+];
+
+/** Local YYYY-MM-DD for a Date (avoids the UTC shift of toISOString). */
+function dayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+const localDay = (iso: string) => dayKey(new Date(iso));
+const fmtDay = (v: string) => v.slice(5).replace("-", "/"); // 2026-07-04 → 07/04
+
+function DailyTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: { value?: number; name?: string; color?: string }[];
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const total = payload.reduce((s, p) => s + (p.value ?? 0), 0);
+  if (total === 0) return null;
+  const title = label
+    ? new Date(`${label}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : "";
+  return (
+    <div className="rounded-lg border border-base-300 bg-base-100 px-3 py-2 shadow-xl">
+      <p className="text-xs font-black text-base-content">{title}</p>
+      {payload.filter(p => (p.value ?? 0) > 0).map(p => (
+        <p key={p.name} className="text-[11px] font-semibold" style={{ color: p.color }}>{p.name}: {p.value}</p>
+      ))}
+      <p className="text-[11px] font-black text-base-content/70 mt-0.5">{total} total</p>
+    </div>
+  );
+}
+
+function InsightsTab({ groups, token }: { groups: SolveGroup[]; token: string }) {
+  const queryClient = useQueryClient();
+  const [includeImported, setIncludeImported] = useState(false);
+  const [confirmSync, setConfirmSync] = useState(false);
+  const [rangeDays, setRangeDays] = useState<number | null>(90);
+  const [activeDiffs, setActiveDiffs] = useState<Record<string, boolean>>({ easy: true, medium: true, hard: true });
+  const [chartType, setChartType] = useState<"line" | "bar">("line");
+
+  // A problem is "imported-only" when it has no real (logged) solve behind it.
+  const hasImported = useMemo(
+    () => groups.some(g => g.solves.every(s => s.is_imported)),
+    [groups],
+  );
+  const visibleGroups = useMemo(
+    () => includeImported ? groups : groups.filter(g => g.solves.some(s => !s.is_imported)),
+    [groups, includeImported],
+  );
+
+  const topicStats = useMemo<TopicStat[]>(() => {
+    const map: Record<string, { count: number; sum: number; rated: number }> = {};
+    for (const g of visibleGroups) {
+      const conf = latestConfidence(g);
+      for (const topic of g.problem.topics) {
+        if (!map[topic]) map[topic] = { count: 0, sum: 0, rated: 0 };
+        const e = map[topic];
+        e.count++;
+        if (conf != null) { e.sum += conf; e.rated++; }
+      }
+    }
+    return Object.entries(map).map(([topic, e]) => ({
+      topic,
+      count: e.count,
+      rated: e.rated,
+      avgConfidence: e.rated ? e.sum / e.rated : null,
+    }));
+  }, [visibleGroups]);
+
+  // Weakest-first: the topics worth grinding rise to the top.
+  const byConfidence = useMemo(
+    () => topicStats.filter(t => t.avgConfidence != null)
+      .sort((a, b) => a.avgConfidence! - b.avgConfidence!)
+      .map(t => ({ topic: t.topic, avg: t.avgConfidence!, count: t.count })),
+    [topicStats],
+  );
+  // The most *prominent* patterns (by PATTERN_PRIORITY), sized by problem count.
+  // No "Other" bucket — just the top patterns, with percentages normalized across
+  // the shown slices so they total 100%.
+  const pieData = useMemo<PieRow[]>(() => {
+    const ranked = topicStats
+      .filter(t => PATTERN_RANK[t.topic] != null)
+      .sort((a, b) => PATTERN_RANK[a.topic] - PATTERN_RANK[b.topic])
+      .slice(0, PIE_COLORS.length);
+    const total = ranked.reduce((s, t) => s + t.count, 0) || 1;
+    return ranked.map((t, i) => ({
+      topic: t.topic,
+      count: t.count,
+      pct: (t.count / total) * 100,
+      color: PIE_COLORS[i % PIE_COLORS.length],
+    }));
+  }, [topicStats]);
+
+  // How many problems this level rating — the confidence distribution.
+  const confDist = useMemo(() => {
+    const counts = [0, 0, 0, 0, 0];
+    for (const g of visibleGroups) {
+      const c = latestConfidence(g);
+      if (c != null) counts[c - 1]++;
+    }
+    return ([1, 2, 3, 4, 5] as const).map(n => ({
+      level: n,
+      label: CONFIDENCE_LABELS[n].label,
+      count: counts[n - 1],
+      color: CONFIDENCE_LABELS[n].color,
+    }));
+  }, [visibleGroups]);
+
+  const ratedCount = useMemo(
+    () => confDist.reduce((s, d) => s + d.count, 0),
+    [confDist],
+  );
+
+  // Average confidence per difficulty — shaky-on-Hard vs shaky-everywhere.
+  const confByDiff = useMemo(() => {
+    const acc: Record<string, { sum: number; n: number }> = {
+      easy: { sum: 0, n: 0 }, medium: { sum: 0, n: 0 }, hard: { sum: 0, n: 0 },
+    };
+    for (const g of visibleGroups) {
+      const c = latestConfidence(g);
+      const d = g.problem.difficulty.toLowerCase();
+      if (c != null && acc[d]) { acc[d].sum += c; acc[d].n++; }
+    }
+    return (["easy", "medium", "hard"] as const).map(d => ({
+      difficulty: d.charAt(0).toUpperCase() + d.slice(1),
+      avg: acc[d].n ? acc[d].sum / acc[d].n : 0,
+      n: acc[d].n,
+      color: DIFF_COLORS[d].text,
+    }));
+  }, [visibleGroups]);
+
+  // Skill-shape: avg confidence across your most *prominent* patterns (ranked by
+  // PATTERN_PRIORITY), not the highest-volume tags. Generic buckets like Array/
+  // String rank last so they only appear if you've barely touched real patterns.
+  const confRadar = useMemo(
+    () => topicStats
+      .filter(t => t.avgConfidence != null && PATTERN_RANK[t.topic] != null)
+      .sort((a, b) => PATTERN_RANK[a.topic] - PATTERN_RANK[b.topic])
+      .slice(0, 8)
+      .map(t => ({ topic: t.topic, avg: t.avgConfidence!, count: t.count })),
+    [topicStats],
+  );
+
+  // Solves per day, split by difficulty, over the selected range. Counts each
+  // solve event (re-solves included); respects the imported toggle per-solve.
+  const dailyData = useMemo(() => {
+    const byDay: Record<string, Record<string, number>> = {};
+    let earliest: string | null = null;
+    for (const g of groups) {
+      const diff = g.problem.difficulty.toLowerCase();
+      if (diff !== "easy" && diff !== "medium" && diff !== "hard") continue;
+      for (const s of g.solves) {
+        if (!includeImported && s.is_imported) continue;
+        const day = localDay(s.solved_at);
+        if (!byDay[day]) byDay[day] = { easy: 0, medium: 0, hard: 0 };
+        byDay[day][diff]++;
+        if (!earliest || day < earliest) earliest = day;
+      }
+    }
+    if (!earliest) return [];
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let start: Date;
+    if (rangeDays) {
+      start = new Date(today);
+      start.setDate(start.getDate() - (rangeDays - 1));
+    } else {
+      start = new Date(`${earliest}T00:00:00`);
+    }
+
+    const rows: { date: string; easy: number; medium: number; hard: number }[] = [];
+    const end = today.getTime();
+    for (const d = new Date(start); d.getTime() <= end; d.setDate(d.getDate() + 1)) {
+      const key = dayKey(d);
+      const rec = byDay[key];
+      rows.push({ date: key, easy: rec?.easy ?? 0, medium: rec?.medium ?? 0, hard: rec?.hard ?? 0 });
+    }
+    return rows;
+  }, [groups, includeImported, rangeDays]);
+
+  const hasDailyData = useMemo(
+    () => dailyData.some(r => r.easy + r.medium + r.hard > 0),
+    [dailyData],
+  );
+
+  const { mutate: sync, isPending: syncing } = useMutation<
+    { synced: number; failed: number }, Error
+  >({
+    mutationFn: async () => {
+      const r = await authFetch(`${API_URL}/api/leetcode/sync-topics`, token, { method: "POST" });
+      if (!r.ok) throw new Error((await r.json()).detail ?? "Sync failed");
+      return r.json();
+    },
+    onSuccess: ({ synced, failed }) => {
+      queryClient.invalidateQueries({ queryKey: ["leetcode"] });
+      if (synced > 0) {
+        toast.success(`Synced topics for ${synced} problem${synced === 1 ? "" : "s"}${failed ? ` — ${failed} couldn't be fetched` : ""}`);
+      } else {
+        toast("No topics returned from LeetCode");
+      }
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  if (groups.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16 text-base-content/25">
+        <BarChart3 size={40} />
+        <div className="flex flex-col items-center gap-1">
+          <p className="font-black text-sm">No topic data yet</p>
+          <p className="text-xs font-semibold">Log a few solves to see your strengths by topic.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const syncControl = confirmSync ? (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-[11px] font-semibold text-base-content/50">
+        Replace all topics with LeetCode&apos;s official tags?
+      </span>
+      <button
+        onClick={() => { setConfirmSync(false); sync(); }}
+        className="btn btn-xs font-black text-white border-none gap-1"
+        style={{ backgroundColor: "var(--game-accent)" }}
+      >
+        <Check size={11} /> Sync
+      </button>
+      <button onClick={() => setConfirmSync(false)} className="btn btn-xs btn-ghost font-black text-base-content/50">
+        Cancel
+      </button>
+    </div>
+  ) : (
+    <button
+      onClick={() => setConfirmSync(true)}
+      disabled={syncing}
+      className="btn btn-sm btn-ghost border border-base-300 gap-1.5 font-bold text-base-content/60"
+      title="Re-fetch official topic tags from LeetCode for every solved problem, overwriting any manual edits."
+    >
+      {syncing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+      {syncing ? "Syncing…" : "Sync topics"}
+    </button>
+  );
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Header: sync + imported view filter */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        {syncControl}
+        {hasImported && <ImportedToggle value={includeImported} onChange={setIncludeImported} />}
+      </div>
+
+      {/* Problems solved each day */}
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <BarChart3 size={16} style={{ color: "var(--game-accent)" }} />
+          <p className="font-black text-sm text-base-content">Problems solved each day</p>
+          <div className="flex items-center gap-1 ml-1">
+            {(["easy", "medium", "hard"] as const).map(d => (
+              <button
+                key={d}
+                onClick={() => setActiveDiffs(a => ({ ...a, [d]: !a[d] }))}
+                className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full transition-all"
+                style={{
+                  color: activeDiffs[d] ? "#fff" : DIFF_COLORS[d].text,
+                  backgroundColor: activeDiffs[d] ? DIFF_COLORS[d].text : `${DIFF_COLORS[d].text}20`,
+                }}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <div className="flex rounded-lg overflow-hidden border border-base-300 text-[11px] font-black">
+              {(["line", "bar"] as const).map(t => (
+                <button
+                  key={t}
+                  onClick={() => setChartType(t)}
+                  className={`px-2 py-1 capitalize transition-colors ${
+                    chartType === t
+                      ? "bg-primary text-primary-content"
+                      : "bg-base-100 text-base-content/40 hover:text-base-content/70"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <div className="flex rounded-lg overflow-hidden border border-base-300 text-[11px] font-black">
+              {DAY_RANGES.map(r => (
+                <button
+                  key={r.label}
+                  onClick={() => setRangeDays(r.days)}
+                  className={`px-2 py-1 transition-colors ${
+                    rangeDays === r.days
+                      ? "bg-primary text-primary-content"
+                      : "bg-base-100 text-base-content/40 hover:text-base-content/70"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {!hasDailyData ? (
+          <p className="text-xs font-semibold text-base-content/40 py-4">No solves in this range.</p>
+        ) : (
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              {chartType === "line" ? (
+                <LineChart data={dailyData} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={fmtDay}
+                    interval={Math.floor(dailyData.length / 10)}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fill: AXIS_TICK, fontSize: 10 }}
+                  />
+                  <YAxis allowDecimals={false} width={24} tickLine={false} axisLine={false} tick={{ fill: AXIS_TICK, fontSize: 11 }} />
+                  <Tooltip cursor={{ stroke: "#94a3b855" }} content={<DailyTooltip />} />
+                  {(["easy", "medium", "hard"] as const)
+                    .filter(d => activeDiffs[d])
+                    .map(d => (
+                      <Line
+                        key={d}
+                        type="monotone"
+                        dataKey={d}
+                        stroke={DIFF_COLORS[d].text}
+                        strokeWidth={2}
+                        dot={false}
+                        name={d.charAt(0).toUpperCase() + d.slice(1)}
+                      />
+                    ))}
+                </LineChart>
+              ) : (
+                <BarChart data={dailyData} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={fmtDay}
+                    interval={Math.floor(dailyData.length / 10)}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fill: AXIS_TICK, fontSize: 10 }}
+                  />
+                  <YAxis allowDecimals={false} width={24} tickLine={false} axisLine={false} tick={{ fill: AXIS_TICK, fontSize: 11 }} />
+                  <Tooltip cursor={{ fill: "#94a3b81a" }} content={<DailyTooltip />} />
+                  {(["easy", "medium", "hard"] as const)
+                    .filter(d => activeDiffs[d])
+                    .map((d, i, arr) => (
+                      <Bar
+                        key={d}
+                        dataKey={d}
+                        stackId="day"
+                        fill={DIFF_COLORS[d].text}
+                        name={d.charAt(0).toUpperCase() + d.slice(1)}
+                        radius={i === arr.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
+                      />
+                    ))}
+                </BarChart>
+              )}
+            </ResponsiveContainer>
+          </div>
+        )}
+      </section>
+
+      {topicStats.length === 0 ? (
+        <p className="text-sm font-semibold text-base-content/40 text-center py-10">
+          No topics on your solves yet — hit <span className="font-black">Sync topics</span> to pull them from LeetCode.
+        </p>
+      ) : (
+       <>
+      {/* Confidence by topic */}
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Brain size={16} style={{ color: "var(--game-accent)" }} />
+          <p className="font-black text-sm text-base-content">Confidence by topic</p>
+          <span className="text-[11px] font-bold text-base-content/40">weakest first</span>
+        </div>
+        {byConfidence.length === 0 ? (
+          <p className="text-xs font-semibold text-base-content/40 py-4">
+            No confidence scores logged yet — rate your solves to unlock this.
+          </p>
+        ) : (
+          <div className="w-full" style={{ height: Math.max(140, byConfidence.length * 28) }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={byConfidence} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+                <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                <XAxis type="number" domain={[0, 5]} ticks={[0, 1, 2, 3, 4, 5]} tick={{ fill: AXIS_TICK, fontSize: 11 }} />
+                <YAxis type="category" dataKey="topic" width={124} tickLine={false} axisLine={false} tick={{ fill: AXIS_TICK, fontSize: 10 }} />
+                <Tooltip cursor={{ fill: "#94a3b81a" }} content={<ConfRadarTooltip />} />
+                <Bar dataKey="avg" radius={[0, 4, 4, 0]}>
+                  {byConfidence.map(d => <Cell key={d.topic} fill={confColor(d.avg)} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </section>
+
+      {/* Confidence distribution + by difficulty */}
+      {ratedCount > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <section className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <BarChart3 size={16} style={{ color: "var(--game-accent)" }} />
+              <p className="font-black text-sm text-base-content">Confidence distribution</p>
+            </div>
+            <div className="h-52 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={confDist} layout="vertical" margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
+                  <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                  <XAxis type="number" allowDecimals={false} tick={{ fill: AXIS_TICK, fontSize: 11 }} />
+                  <YAxis type="category" dataKey="label" width={64} tickLine={false} axisLine={false} tick={{ fill: AXIS_TICK, fontSize: 11 }} />
+                  <Tooltip cursor={{ fill: "#94a3b81a" }} content={<ConfDistTooltip />} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                    {confDist.map(d => <Cell key={d.level} fill={d.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <BarChart3 size={16} style={{ color: "var(--game-accent)" }} />
+              <p className="font-black text-sm text-base-content">Confidence by difficulty</p>
+              <span className="text-[11px] font-bold text-base-content/40">avg 0–5</span>
+            </div>
+            <div className="h-52 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={confByDiff} margin={{ left: 0, right: 8, top: 8, bottom: 4 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                  <XAxis dataKey="difficulty" tickLine={false} axisLine={false} tick={{ fill: AXIS_TICK, fontSize: 11 }} />
+                  <YAxis domain={[0, 5]} ticks={[0, 1, 2, 3, 4, 5]} width={24} tickLine={false} axisLine={false} tick={{ fill: AXIS_TICK, fontSize: 11 }} />
+                  <Tooltip cursor={{ fill: "#94a3b81a" }} content={<ConfDiffTooltip />} />
+                  <Bar dataKey="avg" radius={[4, 4, 0, 0]}>
+                    {confByDiff.map(d => <Cell key={d.difficulty} fill={d.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* Confidence profile by topic (radar) */}
+      {confRadar.length >= 3 && (
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <Brain size={16} style={{ color: "var(--game-accent)" }} />
+            <p className="font-black text-sm text-base-content">Confidence profile by pattern</p>
+            <span className="text-[11px] font-bold text-base-content/40">most prominent</span>
+          </div>
+          <div className="h-72 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <RadarChart data={confRadar} outerRadius="70%">
+                <PolarGrid stroke={GRID_STROKE} />
+                <PolarAngleAxis dataKey="topic" tick={{ fill: AXIS_TICK, fontSize: 10 }} />
+                <PolarRadiusAxis domain={[0, 5]} angle={90} tick={{ fill: AXIS_TICK, fontSize: 9 }} />
+                <Radar dataKey="avg" stroke="var(--game-accent)" fill="var(--game-accent)" fillOpacity={0.3} />
+                <Tooltip content={<ConfRadarTooltip />} />
+              </RadarChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      )}
+
+      {/* Problems solved by topic */}
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <PieChartIcon size={16} style={{ color: "var(--game-accent)" }} />
+          <p className="font-black text-sm text-base-content">Problems solved by pattern</p>
+          <span className="text-[11px] font-bold text-base-content/40">most prominent</span>
+        </div>
+        {pieData.length === 0 ? (
+          <p className="text-xs font-semibold text-base-content/40 py-4">
+            No topics yet — fetch or log a few to see the breakdown.
+          </p>
+        ) : (
+          <div className="flex flex-col sm:flex-row items-center gap-6">
+            <div className="h-56 w-56 shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    dataKey="count"
+                    nameKey="topic"
+                    innerRadius="58%"
+                    outerRadius="92%"
+                    paddingAngle={2}
+                    stroke="none"
+                    isAnimationActive={false}
+                  >
+                    {pieData.map(d => <Cell key={d.topic} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip content={<TopicPieTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+              {pieData.map(d => (
+                <div key={d.topic} className="flex items-center gap-2 min-w-0">
+                  <span className="size-2.5 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                  <span className="flex-1 truncate text-xs font-bold text-base-content/70" title={d.topic}>{d.topic}</span>
+                  <span className="shrink-0 font-mono text-[11px] font-black text-base-content/50">{d.pct.toFixed(0)}%</span>
+                  <span className="w-6 shrink-0 text-right text-[11px] font-semibold text-base-content/35">{d.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+       </>
+      )}
+    </div>
+  );
+}
+
+// ── To Do tab ───────────────────────────────────────────────────────────────
+
+/** Inline "add problem" search scoped to a single Kanban column/section. */
+function TodoTab({ token, todos, isLoading, onLogProblem }: {
+  token: string; todos: TodoItem[]; isLoading: boolean; onLogProblem: (p: SearchResult) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [active,     setActive]     = useState<number | null>(null); // null = Backlog
+  const [query,      setQuery]      = useState("");
+  const [results,    setResults]    = useState<SearchResult[]>([]);
+  const [searching,  setSearching]  = useState(false);
+  const [showDrop,   setShowDrop]   = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [hideDone,   setHideDone]   = useState(false);
+  const [creating,   setCreating]   = useState(false);
+  const [newName,    setNewName]    = useState("");
+  const [renaming,   setRenaming]   = useState(false);
+  const [renameText, setRenameText] = useState("");
+  const [dragPid,    setDragPid]    = useState<number | null>(null);
+  const [overPill,   setOverPill]   = useState<number | null | undefined>(undefined);
+  const [overRow,    setOverRow]    = useState<number | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoPicked  = useRef(false);
+
+  const { data: lists = [], isLoading: listsLoading } = useQuery<TodoList[]>({
+    queryKey: ["leetcode", "todo-lists"],
+    queryFn:  () => authFetch(`${API_URL}/api/leetcode/todo/lists`, token).then(r => r.json()),
+  });
+
+  const onListIds = useMemo(() => new Set(todos.map(t => t.problem.leetcode_id)), [todos]);
+  // done/total per list (key null = Backlog).
+  const counts = useMemo(() => {
+    const m = new Map<number | null, { done: number; total: number }>();
+    for (const t of todos) {
+      const e = m.get(t.list_id) ?? { done: 0, total: 0 };
+      e.total++; if (t.done) e.done++;
+      m.set(t.list_id, e);
+    }
+    return m;
+  }, [todos]);
+
+  // If the active list no longer exists (deleted), fall back to Backlog.
+  const activeValid = active === null || lists.some(l => l.id === active);
+  const view = activeValid ? active : null;
+  const activeListObj = lists.find(l => l.id === view) ?? null;
+  const activeCount = counts.get(view) ?? { done: 0, total: 0 };
+  const backlogCount = counts.get(null) ?? { done: 0, total: 0 };
+  const showBacklogPill = backlogCount.total > 0 || lists.length === 0 || view === null;
+
+  // Rows for the active list, in manual order.
+  const rows = useMemo(
+    () => todos.filter(t => t.list_id === view).sort((a, b) => a.position - b.position || a.id - b.id),
+    [todos, view],
+  );
+  const visibleRows = hideDone ? rows.filter(r => !r.done) : rows;
+
+  // On first load, land on the first named list if the Backlog is empty.
+  useEffect(() => {
+    if (autoPicked.current || isLoading || listsLoading) return;
+    autoPicked.current = true;
+    if (backlogCount.total === 0 && lists.length > 0) setActive(lists[0].id);
+  }, [isLoading, listsLoading, backlogCount.total, lists]);
+
+  useEffect(() => {
+    if (!query.trim() || query.length < 2) { setResults([]); setShowDrop(false); return; }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const r = await authFetch(`${API_URL}/api/leetcode/search?q=${encodeURIComponent(query)}`, token);
+        if (r.ok) { setResults(await r.json()); setShowDrop(true); }
+      } finally { setSearching(false); }
+    }, 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, token]);
+
+  const { mutate: addTodo } = useMutation<TodoItem, Error, SearchResult>({
+    mutationFn: async (p) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/todo`, token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leetcode_id: p.leetcode_id, title: p.title, slug: p.slug, difficulty: p.difficulty, topics: p.topics, list_id: view }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail ?? "Couldn't add");
+      return r.json();
+    },
+    onSuccess: (todo) => {
+      queryClient.invalidateQueries({ queryKey: ["leetcode", "todo"] });
+      toast.success(todo.done ? "Added — already solved, so it's checked off" : "Added to your list");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const { mutate: removeTodo } = useMutation<void, Error, number>({
+    mutationFn: async (problemId) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/todo/${problemId}`, token, { method: "DELETE" });
+      if (!r.ok && r.status !== 204) throw new Error("Couldn't remove");
+    },
+    onMutate: async (problemId) => {
+      await queryClient.cancelQueries({ queryKey: ["leetcode", "todo"] });
+      const previous = queryClient.getQueryData<TodoItem[]>(["leetcode", "todo"]);
+      queryClient.setQueryData<TodoItem[]>(["leetcode", "todo"], (old = []) =>
+        old.filter(t => t.problem.id !== problemId));
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      const c = ctx as { previous?: TodoItem[] } | undefined;
+      if (c?.previous) queryClient.setQueryData(["leetcode", "todo"], c.previous);
+      toast.error("Couldn't remove");
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["leetcode", "todo"] }),
+  });
+
+  const { mutate: importTodos, isPending: importing } = useMutation<
+    { added: number; skipped: number; failed: number }, Error
+  >({
+    mutationFn: async () => {
+      const slugs = importText.split(/[\n,\s]+/).map(s => s.trim()).filter(Boolean);
+      if (slugs.length === 0) throw new Error("Paste some problem slugs or URLs first");
+      const r = await authFetch(`${API_URL}/api/leetcode/todo/import`, token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slugs, list_id: view }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail ?? "Import failed");
+      return r.json();
+    },
+    onSuccess: ({ added, skipped, failed }) => {
+      queryClient.invalidateQueries({ queryKey: ["leetcode", "todo"] });
+      toast.success(`Added ${added}${skipped ? `, skipped ${skipped} already on a list` : ""}${failed ? `, ${failed} failed` : ""}`);
+      setImportText(""); setShowImport(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const { mutate: moveTodo } = useMutation<void, Error, { problemId: number; listId: number | null }>({
+    mutationFn: async ({ problemId, listId }) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/todo/${problemId}`, token, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ list_id: listId }),
+      });
+      if (!r.ok && r.status !== 204) throw new Error("Couldn't move");
+    },
+    onMutate: async ({ problemId, listId }) => {
+      await queryClient.cancelQueries({ queryKey: ["leetcode", "todo"] });
+      const previous = queryClient.getQueryData<TodoItem[]>(["leetcode", "todo"]);
+      queryClient.setQueryData<TodoItem[]>(["leetcode", "todo"], (old = []) =>
+        old.map(t => t.problem.id === problemId ? { ...t, list_id: listId, position: Number.MAX_SAFE_INTEGER } : t));
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      const c = ctx as { previous?: TodoItem[] } | undefined;
+      if (c?.previous) queryClient.setQueryData(["leetcode", "todo"], c.previous);
+      toast.error("Couldn't move");
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["leetcode", "todo"] }),
+  });
+
+  const { mutate: reorderTodos } = useMutation<void, Error, number[]>({
+    mutationFn: async (problemIds) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/todo/reorder`, token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ list_id: view, problem_ids: problemIds }),
+      });
+      if (!r.ok && r.status !== 204) throw new Error("Couldn't reorder");
+    },
+    onMutate: async (problemIds) => {
+      await queryClient.cancelQueries({ queryKey: ["leetcode", "todo"] });
+      const previous = queryClient.getQueryData<TodoItem[]>(["leetcode", "todo"]);
+      const pos = new Map(problemIds.map((pid, i) => [pid, i]));
+      queryClient.setQueryData<TodoItem[]>(["leetcode", "todo"], (old = []) =>
+        old.map(t => pos.has(t.problem.id) ? { ...t, position: pos.get(t.problem.id)! } : t));
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      const c = ctx as { previous?: TodoItem[] } | undefined;
+      if (c?.previous) queryClient.setQueryData(["leetcode", "todo"], c.previous);
+      toast.error("Couldn't reorder");
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["leetcode", "todo"] }),
+  });
+
+  const { mutate: createList } = useMutation<TodoList, Error, string>({
+    mutationFn: async (name) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/todo/lists`, token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail ?? "Couldn't create list");
+      return r.json();
+    },
+    onSuccess: (l) => {
+      queryClient.invalidateQueries({ queryKey: ["leetcode", "todo-lists"] });
+      setActive(l.id); setCreating(false); setNewName("");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const { mutate: renameList } = useMutation<TodoList, Error, { id: number; name: string }>({
+    mutationFn: async ({ id, name }) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/todo/lists/${id}`, token, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail ?? "Couldn't rename");
+      return r.json();
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["leetcode", "todo-lists"] }); setRenaming(false); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const { mutate: deleteList } = useMutation<void, Error, number>({
+    mutationFn: async (id) => {
+      const r = await authFetch(`${API_URL}/api/leetcode/todo/lists/${id}`, token, { method: "DELETE" });
+      if (!r.ok && r.status !== 204) throw new Error("Couldn't delete list");
+    },
+    onSuccess: () => {
+      setActive(null);
+      queryClient.invalidateQueries({ queryKey: ["leetcode", "todo-lists"] });
+      queryClient.invalidateQueries({ queryKey: ["leetcode", "todo"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function pick(p: SearchResult) {
+    if (!onListIds.has(p.leetcode_id)) addTodo(p);
+    setQuery(""); setResults([]); setShowDrop(false);
+  }
+
+  function commitCreate() {
+    const name = newName.trim();
+    if (name) createList(name);
+    else { setCreating(false); setNewName(""); }
+  }
+
+  function commitRename() {
+    if (!activeListObj) return;
+    const name = renameText.trim();
+    if (name && name !== activeListObj.name) renameList({ id: activeListObj.id, name });
+    else setRenaming(false);
+  }
+
+  function handleDeleteList() {
+    if (!activeListObj) return;
+    const n = activeCount.total;
+    if (!confirm(`Delete “${activeListObj.name}”${n ? ` and the ${n} problem${n === 1 ? "" : "s"} on it` : ""}?`)) return;
+    deleteList(activeListObj.id);
+  }
+
+  function resetDrag() { setDragPid(null); setOverRow(null); setOverPill(undefined); }
+
+  function handleRowDrop(targetPid: number) {
+    const pid = dragPid;
+    resetDrag();
+    if (pid == null || pid === targetPid) return;
+    const ordered = rows.map(r => r.problem.id).filter(id => id !== pid);
+    const idx = ordered.indexOf(targetPid);
+    if (idx === -1) return;
+    ordered.splice(idx, 0, pid);
+    reorderTodos(ordered);
+  }
+
+  function handleEndDrop() {
+    const pid = dragPid;
+    resetDrag();
+    if (pid == null) return;
+    const ordered = rows.map(r => r.problem.id).filter(id => id !== pid);
+    ordered.push(pid);
+    reorderTodos(ordered);
+  }
+
+  const pill = (key: number | null, name: string) => {
+    const c = counts.get(key) ?? { done: 0, total: 0 };
+    const isActive = view === key;
+    const isOver = overPill !== undefined && overPill === key && dragPid !== null;
+    return (
+      <button
+        key={key ?? "__backlog"}
+        onClick={() => setActive(key)}
+        onDragOver={e => { e.preventDefault(); if (overPill !== key) setOverPill(key); }}
+        onDragLeave={() => setOverPill(cur => (cur === key ? undefined : cur))}
+        onDrop={e => {
+          e.preventDefault(); e.stopPropagation();
+          const pid = dragPid;
+          resetDrag();
+          if (pid != null && key !== view) moveTodo({ problemId: pid, listId: key });
+        }}
+        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-sm font-black transition-colors shrink-0 ${
+          isActive
+            ? "text-white border-transparent"
+            : isOver
+              ? "border-[var(--game-accent)] text-base-content bg-base-200"
+              : "border-base-300 text-base-content/60 bg-base-200/40 hover:bg-base-200"
+        }`}
+        style={isActive ? { backgroundColor: "var(--game-accent)", boxShadow: "0 3px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" } : undefined}
+      >
+        {name}
+        <span className={`text-[10px] font-black ${isActive ? "text-white/70" : "text-base-content/35"}`}>
+          {c.done}/{c.total}
+        </span>
+      </button>
+    );
+  };
+
+  const pct = activeCount.total ? Math.round((activeCount.done / activeCount.total) * 100) : 0;
+  const anyDoneHere = rows.some(r => r.done);
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* List switcher — drop a problem on a pill to move it there */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {showBacklogPill && pill(null, "Backlog")}
+        {lists.map(l => pill(l.id, l.name))}
+        {creating ? (
+          <input
+            autoFocus
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") commitCreate();
+              if (e.key === "Escape") { setCreating(false); setNewName(""); }
+            }}
+            onBlur={commitCreate}
+            placeholder="List name…"
+            className="input input-sm input-bordered w-40 font-bold"
+          />
+        ) : (
+          <button
+            onClick={() => setCreating(true)}
+            className="flex items-center gap-1 px-3.5 py-1.5 rounded-full border border-dashed border-base-300 text-sm font-bold text-base-content/40 hover:text-base-content/70 hover:border-base-content/30 transition-colors shrink-0"
+          >
+            <Plus size={13} /> New list
+          </button>
+        )}
+      </div>
+
+      {/* Active list header: name, rename/delete, progress */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {renaming && activeListObj ? (
+          <input
+            autoFocus
+            value={renameText}
+            onChange={e => setRenameText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") commitRename();
+              if (e.key === "Escape") setRenaming(false);
+            }}
+            onBlur={commitRename}
+            className="input input-sm input-bordered w-52 font-black"
+          />
+        ) : (
+          <h3 className="font-black text-base text-base-content">{activeListObj?.name ?? "Backlog"}</h3>
+        )}
+        {activeListObj && !renaming && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => { setRenaming(true); setRenameText(activeListObj.name); }}
+              className="p-1 rounded-md text-base-content/30 hover:text-base-content hover:bg-base-200 transition-colors"
+              title="Rename list"
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              onClick={handleDeleteList}
+              className="p-1 rounded-md text-base-content/30 hover:text-error hover:bg-error/10 transition-colors"
+              title="Delete list"
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        )}
+        {activeCount.total > 0 && (
+          <>
+            <div className="h-1.5 w-40 rounded-full bg-base-300 overflow-hidden">
+              <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: "#22c55e" }} />
+            </div>
+            <span className="text-[11px] font-black text-base-content/40">{activeCount.done}/{activeCount.total} solved</span>
+          </>
+        )}
+        {anyDoneHere && (
+          <label className="flex items-center gap-2 cursor-pointer select-none shrink-0 ml-auto">
+            <input
+              type="checkbox"
+              checked={hideDone}
+              onChange={e => setHideDone(e.target.checked)}
+              className="toggle toggle-xs"
+              style={{ "--tglbg": "var(--game-accent)" } as React.CSSProperties}
+            />
+            <span className="text-[11px] font-bold text-base-content/50">Hide finished</span>
+          </label>
+        )}
+      </div>
+
+      {/* Add via search — goes into the active list */}
+      <div className="flex items-start gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/30 pointer-events-none" />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={`Search a problem to add to ${activeListObj?.name ?? "Backlog"}…`}
+            className="input input-bordered w-full pl-9 pr-9 text-sm font-semibold"
+            autoComplete="off"
+          />
+          {searching && <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-base-content/30 animate-spin" />}
+          {showDrop && results.length > 0 && (
+            <div className="absolute z-50 w-full mt-1 bg-base-200 border border-base-300 rounded-xl shadow-2xl overflow-hidden">
+              {results.map(r => {
+                const c = DIFF_COLORS[r.difficulty] ?? DIFF_COLORS.medium;
+                const added = onListIds.has(r.leetcode_id);
+                return (
+                  <button key={r.leetcode_id} type="button" onClick={() => pick(r)} disabled={added}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-base-300/60 transition-colors text-left disabled:opacity-40">
+                    <span className="font-mono text-xs text-base-content/35 shrink-0 w-9">{r.leetcode_id}.</span>
+                    <span className="flex-1 text-sm font-bold text-base-content truncate">{r.title}</span>
+                    {added && <span className="text-[10px] font-black text-base-content/40 shrink-0">on a list</span>}
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full shrink-0" style={{ color: c.text, backgroundColor: c.bg }}>{r.difficulty}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <button
+          onClick={() => setShowImport(v => !v)}
+          className="btn btn-ghost border border-base-300 gap-1.5 font-bold text-base-content/60 shrink-0"
+        >
+          <Upload size={14} /> Import
+        </button>
+      </div>
+
+      {/* Bulk import by slugs / URLs */}
+      {showImport && (
+        <div className="rounded-2xl bg-base-200 border border-base-300 p-4 flex flex-col gap-3">
+          <p className="text-xs font-black text-base-content/60">
+            Paste problem slugs or LeetCode URLs — one per line or comma-separated. They&apos;ll go into{" "}
+            <span className="text-base-content">{activeListObj?.name ?? "Backlog"}</span>; already-solved ones show up checked off.
+          </p>
+          <textarea
+            value={importText}
+            onChange={e => setImportText(e.target.value)}
+            rows={4}
+            placeholder={"two-sum\nvalid-parentheses\nhttps://leetcode.com/problems/merge-k-sorted-lists/"}
+            className="textarea textarea-bordered w-full text-sm font-mono"
+          />
+          <div className="flex gap-2">
+            <button onClick={() => importTodos()} disabled={importing}
+              className="btn btn-sm font-black text-white border-none gap-2"
+              style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}>
+              {importing ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              {importing ? "Importing…" : "Import to list"}
+            </button>
+            <button onClick={() => setShowImport(false)} className="btn btn-sm btn-ghost font-black">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* The list */}
+      {isLoading ? (
+        <p className="text-sm font-bold text-base-content/30 text-center py-10">Loading…</p>
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 py-14 text-base-content/25">
+          <ListTodo size={40} />
+          <div className="flex flex-col items-center gap-1">
+            <p className="font-black text-sm">
+              {todos.length === 0 && lists.length === 0 ? "Your to-do list is empty" : `Nothing in ${activeListObj?.name ?? "Backlog"} yet`}
+            </p>
+            <p className="text-xs font-semibold">Search a problem above, or import a curated list to plan your grind.</p>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="flex flex-col gap-1.5"
+          onDragOver={e => e.preventDefault()}
+          onDrop={e => { e.preventDefault(); handleEndDrop(); }}
+        >
+          {visibleRows.map(t => {
+            const c = DIFF_COLORS[t.problem.difficulty.toLowerCase()] ?? DIFF_COLORS.medium;
+            const isDragging = dragPid === t.problem.id;
+            const isOver = overRow === t.problem.id && dragPid !== null && !isDragging;
+            return (
+              <div
+                key={t.id}
+                draggable
+                onDragStart={e => {
+                  setDragPid(t.problem.id);
+                  e.dataTransfer.setData("text/plain", String(t.problem.id));
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragEnd={resetDrag}
+                onDragOver={e => { e.preventDefault(); if (overRow !== t.problem.id) setOverRow(t.problem.id); }}
+                onDrop={e => { e.preventDefault(); e.stopPropagation(); handleRowDrop(t.problem.id); }}
+                className={`group flex items-center gap-2.5 px-3 py-2 rounded-xl border transition-colors ${
+                  isDragging ? "opacity-40" : ""
+                } ${isOver ? "border-[var(--game-accent)]" : t.done ? "bg-base-200/40 border-base-300/50" : "bg-base-100 border-base-300"}`}
+              >
+                <GripVertical size={14} className="shrink-0 text-base-content/20 cursor-grab active:cursor-grabbing" />
+                {t.done ? (
+                  <Check size={14} className="shrink-0" style={{ color: "#22c55e" }} />
+                ) : (
+                  <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: c.text }} title={t.problem.difficulty} />
+                )}
+                <span className="font-mono text-[11px] text-base-content/30 shrink-0 w-9 text-right">{t.problem.leetcode_id}</span>
+                <a
+                  href={`https://leetcode.com/problems/${t.problem.slug}/`}
+                  target="_blank" rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className={`flex-1 min-w-0 truncate text-sm font-bold hover:underline ${t.done ? "text-base-content/40 line-through" : "text-base-content"}`}
+                  title={t.problem.title}
+                >
+                  {t.problem.title}
+                </a>
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full shrink-0 hidden sm:inline" style={{ color: c.text, backgroundColor: c.bg }}>
+                  {t.problem.difficulty}
+                </span>
+                <button
+                  onClick={() => onLogProblem({ leetcode_id: t.problem.leetcode_id, title: t.problem.title, slug: t.problem.slug, difficulty: t.problem.difficulty, topics: t.problem.topics })}
+                  className="shrink-0 p-1 rounded-md text-base-content/30 hover:text-white hover:bg-[var(--game-accent)] transition-colors opacity-0 group-hover:opacity-100"
+                  title={t.done ? "Log another solve" : "Log solve"}
+                >
+                  <Check size={13} />
+                </button>
+                <button
+                  onClick={() => removeTodo(t.problem.id)}
+                  className="shrink-0 p-1 rounded-md text-base-content/20 hover:text-error hover:bg-error/10 transition-colors opacity-0 group-hover:opacity-100"
+                  title="Remove"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -2211,8 +3793,10 @@ export default function LeetCodePage() {
   const [pageSize,     setPageSize]     = useState(25);
   const [pageIndex,    setPageIndex]    = useState(0);
 
-  const [tab, setTab] = useState<"review" | "library">("library");
+  const [tab, setTab] = useState<"review" | "library" | "insights" | "todo">("library");
+  const [reviewGoal, setReviewGoal] = useDailyGoal();
   const [includeImported, setIncludeImported] = useState(false);
+  const [logInitial, setLogInitial] = useState<SearchResult | null>(null);
   const tabInitialized = useRef(false);
 
   const { data: solves = [], isLoading } = useQuery<Solve[]>({
@@ -2226,6 +3810,23 @@ export default function LeetCodePage() {
     queryFn:  () => authFetch(`${API_URL}/api/leetcode/review/due?include_imported=${includeImported}`, token!).then(r => r.json()),
     enabled:  !!token,
   });
+
+  const { data: reviewStats } = useQuery<ReviewStats>({
+    queryKey: ["leetcode", "review-stats"],
+    queryFn:  () => authFetch(`${API_URL}/api/leetcode/review/stats?tz_offset=${new Date().getTimezoneOffset()}`, token!).then(r => r.json()),
+    enabled:  !!token,
+  });
+
+  const { data: todos = [], isLoading: todosLoading } = useQuery<TodoItem[]>({
+    queryKey: ["leetcode", "todo"],
+    queryFn:  () => authFetch(`${API_URL}/api/leetcode/todo`, token!).then(r => r.json()),
+    enabled:  !!token,
+  });
+
+  function openLog(initial: SearchResult | null) {
+    setLogInitial(initial);
+    modalRef.current?.showModal();
+  }
 
   // Land on the Review tab the first time data loads if anything is due.
   useEffect(() => {
@@ -2305,7 +3906,12 @@ export default function LeetCodePage() {
     manualPagination: false,
   });
 
-  function handleSuccess() {
+  function handleSuccess(solved?: SearchResult) {
+    // Instantly check off the matching to-do so the list updates without a refetch wait.
+    if (solved) {
+      queryClient.setQueryData<TodoItem[]>(["leetcode", "todo"], (old = []) =>
+        old.map(t => t.problem.leetcode_id === solved.leetcode_id ? { ...t, done: true } : t));
+    }
     queryClient.invalidateQueries({ queryKey: ["leetcode"] });
     modalRef.current?.close();
   }
@@ -2449,7 +4055,7 @@ export default function LeetCodePage() {
               )}
             </ul>
           </div>
-          <button onClick={() => modalRef.current?.showModal()}
+          <button onClick={() => openLog(null)}
             className="btn btn-sm gap-2 font-black text-white border-none"
             style={{ backgroundColor: "var(--game-accent)", boxShadow: "0 4px 0 color-mix(in srgb, var(--game-accent) 50%, #000)" }}>
             <Plus size={14} />
@@ -2503,7 +4109,7 @@ export default function LeetCodePage() {
 
       {/* Log Solve modal */}
       <dialog ref={modalRef} className="modal">
-        <div className="modal-box w-full max-w-2xl h-[60vh] p-0 flex flex-col">
+        <div className="modal-box w-[56rem] max-w-[95vw] h-[80vh] min-w-[24rem] min-h-[24rem] max-h-[92vh] p-0 flex flex-col resize overflow-auto">
           <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
             <p className="font-black text-sm text-base-content">Log a Solve</p>
             <button type="button" onClick={() => modalRef.current?.close()} className="text-base-content/30 hover:text-base-content/60 transition-colors">
@@ -2511,7 +4117,7 @@ export default function LeetCodePage() {
             </button>
           </div>
           <div className="overflow-y-auto min-h-0 flex-1 px-6 pb-6">
-            {token && <LogSolveForm token={token} onSuccess={handleSuccess} />}
+            {token && <LogSolveForm key={logInitial?.leetcode_id ?? "blank"} token={token} onSuccess={handleSuccess} initial={logInitial} />}
           </div>
         </div>
         <form method="dialog" className="modal-backdrop">
@@ -2549,8 +4155,11 @@ export default function LeetCodePage() {
       {/* Tab strip: Review vs Library */}
       <div className="flex items-center gap-1 border-b border-base-300">
         {([
-          { id: "review",  label: "Review",  badge: dueItems.length },
-          { id: "library", label: "Library", badge: 0 },
+          // Show what's left of today's goal, not the raw backlog wall.
+          { id: "review",   label: "Review",   badge: Math.min(dueItems.length, Math.max(0, reviewGoal - (reviewStats?.done_today ?? 0))) },
+          { id: "library",  label: "Library",  badge: 0 },
+          { id: "todo",     label: "To Do",    badge: todos.filter(t => !t.done).length },
+          { id: "insights", label: "Insights", badge: 0 },
         ] as const).map(t => (
           <button
             key={t.id}
@@ -2562,6 +4171,8 @@ export default function LeetCodePage() {
             }`}
           >
             {t.id === "review" && <Brain size={14} />}
+            {t.id === "todo" && <ListTodo size={14} />}
+            {t.id === "insights" && <BarChart3 size={14} />}
             {t.label}
             {t.badge > 0 && (
               <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full"
@@ -2578,10 +4189,17 @@ export default function LeetCodePage() {
           items={dueItems}
           isLoading={dueLoading}
           token={token!}
+          stats={reviewStats}
+          goal={reviewGoal}
+          onGoalChange={setReviewGoal}
           includeImported={includeImported}
           onToggleImported={setIncludeImported}
           onChanged={() => queryClient.invalidateQueries({ queryKey: ["leetcode"] })}
         />
+      ) : tab === "insights" ? (
+        <InsightsTab groups={groups} token={token!} />
+      ) : tab === "todo" ? (
+        <TodoTab token={token!} todos={todos} isLoading={todosLoading} onLogProblem={openLog} />
       ) : (
         <>
       {/* Filter + Sort bar */}

@@ -1,6 +1,23 @@
 # app/schemas/leetcode.py
-from datetime import datetime
-from pydantic import BaseModel
+from datetime import datetime, timezone
+from typing import Annotated
+from pydantic import BaseModel, PlainSerializer
+
+
+def _to_utc_iso(dt: datetime) -> str:
+    """Serialize a datetime as UTC ISO 8601 with an explicit offset.
+
+    SQLite (local dev) drops tzinfo, so DB datetimes come back naive even
+    though they're stored as UTC. Without a 'Z'/offset the browser parses
+    them as local time, shifting solve times and breaking "today" labels.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
+# datetime that always serializes with an explicit UTC offset
+UtcDateTime = Annotated[datetime, PlainSerializer(_to_utc_iso, return_type=str)]
 
 
 class LeetCodeProblemOut(BaseModel):
@@ -39,7 +56,7 @@ class LeetCodeSolveOut(BaseModel):
     time_complexity: str | None
     space_complexity: str | None
     confidence: int | None
-    solved_at: datetime
+    solved_at: UtcDateTime
     xp_awarded: int = 0
     is_imported: bool
 
@@ -90,17 +107,80 @@ class LeetCodeSolveUpdate(BaseModel):
     space_complexity: str | None = None
     confidence: int | None = None
     solved_at: datetime | None = None
+    from_review: bool = False  # edited via the review queue → reschedule its Leitner box
+
+
+class LeetCodeTodoListCreate(BaseModel):
+    name: str
+
+
+class LeetCodeTodoListOut(BaseModel):
+    id: int
+    name: str
+    position: int
+
+    model_config = {"from_attributes": True}
+
+
+class LeetCodeTodoCreate(BaseModel):
+    leetcode_id: int
+    title: str
+    slug: str
+    difficulty: str
+    topics: list[str] = []
+    list_id: int | None = None  # null = Backlog
+
+
+class LeetCodeTodoOut(BaseModel):
+    id: int
+    problem: LeetCodeProblemOut
+    added_at: UtcDateTime
+    list_id: int | None = None
+    position: int = 0
+    done: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+class LCTodoImportRequest(BaseModel):
+    slugs: list[str]
+    list_id: int | None = None
+
+
+class LeetCodeTodoMove(BaseModel):
+    list_id: int | None = None
+
+
+class LCTodoReorder(BaseModel):
+    list_id: int | None = None
+    problem_ids: list[int]
+
+
+class LCTodoImportResult(BaseModel):
+    added: int
+    skipped: int
+    failed: int
 
 
 class ReviewDueItem(BaseModel):
     problem: LeetCodeProblemOut
     box: int
-    next_review_at: datetime
+    next_review_at: UtcDateTime
     last_solve: LeetCodeSolveOut | None = None
     solve_count: int
     imported_only: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class ReviewStatsOut(BaseModel):
+    done_today: int
+    box_counts: dict[str, int]
+    active: int
+    graduated: int
+    due_now: int
+    due_tomorrow: int
+    due_week: int
 
 
 class TopicStat(BaseModel):
