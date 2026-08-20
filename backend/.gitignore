@@ -8,7 +8,6 @@ __pycache__/
 dist/
 .pytest_cache/
 .mypy_cache/
-alembic/versions/*.py
 .ruff_cache/
 .DS_Store
 secrets.json

@@ -2,7 +2,7 @@
 .claude/
 
 # Backend
-backend/.env
+backend/.env*
 backend/.env.production
 backend/.venv
 backend/__pycache__/

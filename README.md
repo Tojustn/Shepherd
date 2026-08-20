@@ -37,3 +37,32 @@ pnpm dev
 ```
 
 In dev mode, skip GitHub OAuth by hitting `http://localhost:8000/api/auth/dev-login`.
+
+## Deploying the backend to Fly.io
+
+The backend is deployed as the `shepherd-backend` Fly.io app from `backend/`:
+
+```bash
+fly deploy backend --config backend/fly.toml
+```
+
+Production configuration belongs in Fly secrets, not in a committed `.env` file. Import or set the secrets before the first deploy, then run database migrations against the production database:
+
+```bash
+fly secrets list -a shepherd-backend
+cd backend
+alembic upgrade head
+```
+
+GitHub Actions deploys automatically on pushes to `main` through `.github/workflows/fly-deploy.yml`. Add a repository secret named `FLY_API_TOKEN` (a Fly deploy token for `shepherd-backend`) before pushing:
+
+```bash
+fly tokens create deploy -a shepherd-backend
+```
+
+Monitor the app with:
+
+```bash
+fly status -a shepherd-backend
+fly logs -a shepherd-backend
+```
