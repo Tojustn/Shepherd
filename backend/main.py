@@ -40,5 +40,4 @@ app.include_router(api_router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
-
+    return {"status": "ok", "service": "shepherd-api", "version": app.version}
